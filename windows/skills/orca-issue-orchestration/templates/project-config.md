@@ -51,6 +51,6 @@
 - 交付：默认 PR，不自动合并；只有明确授权才协调者合并
 - 评审间保留已结算开发终端：<用户授权记录；未授权时遵循 Orca 释放/后续新终端机制>
 - 通知：默认当前对话及授权范围内 Issue 评论；外部机器人未配置不阻断普通任务。提示用户以新增评论回复；编辑旧评论的通知可见但不等于自动批准
-- GitHub 消息来源：<webhook 服务地址，如 https://githubwebhook.madebynight.top（WATCH_URL）；来源>
+- GitHub 消息来源：<实际 webhook 服务地址（WATCH_URL），如 https://<your-webhook-host>；无默认值，使用前须设置环境变量；来源>
 - 本地凭据文件：`~/.config/orca-webhook/message-token`（消息服务 Bearer 令牌，由主 Agent 配置读取；不写入本配置、不出现在状态文件或输出中）
 - 暂停与恢复：<本项目必须交用户决定的事项；权限/工具失败保留现场并从原步骤续接>

@@ -36,19 +36,21 @@ S rule "<用户已定的、所有协调者必须遵守的约定>"
 # PowerShell：使用上面已经解析的 $SKILL_DIR、$REPO、$RUN_ID
 $WatchDir = Join-Path $REPO ".orchestration/$RUN_ID"
 $WatchRepo = "<owner/name>"
+# 先在当前终端配置实际服务地址；下行仅为占位示例，不是默认值：
+# $env:WATCH_URL = "https://<your-webhook-host>"
 function W {
+    if ([string]::IsNullOrWhiteSpace($env:WATCH_URL)) {
+        throw '未设置 WATCH_URL。请先设置 $env:WATCH_URL = "https://<your-webhook-host>"，并将占位符替换为实际 webhook 服务地址。'
+    }
     $previousToken = $env:MESSAGE_TOKEN
-    $previousUrl = $env:WATCH_URL
     try {
         if (-not $env:MESSAGE_TOKEN) {
             $tokenFile = Join-Path $HOME ".config/orca-webhook/message-token"
             $env:MESSAGE_TOKEN = (Get-Content -LiteralPath $tokenFile -Raw -ErrorAction Stop).Trim()
         }
-        if (-not $env:WATCH_URL) { $env:WATCH_URL = "https://githubwebhook.madebynight.top" }
         & $PY -X utf8 "$SKILL_DIR/scripts/webhook_watch.py" --state-dir $WatchDir @args
     } finally {
         $env:MESSAGE_TOKEN = $previousToken
-        $env:WATCH_URL = $previousUrl
     }
 }
 W init --repository-id <仓库数字ID> --subscription-key "<host>-<owner/name>-<run_id>" # 先固定订阅起点；重复 init 幂等

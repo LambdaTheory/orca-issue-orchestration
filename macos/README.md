@@ -1,4 +1,4 @@
-# Orca Issue Orchestration · macos · v1.0.1
+# Orca Issue Orchestration · macos · v1.0.2
 
 本平台包含完整 11 个 skills，使用 bash / zsh 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
 
@@ -11,6 +11,10 @@
 `ORCA_ISSUE_SKILL_DIR` 可覆盖主 skill 的安装目录；`ORCA_ISSUE_PYTHON` 可指定 Python 3 解释器。路径必须按当前执行宿主填写，安装目录与开发项目目录不是同一个概念。
 
 按需读取参考文档，不把所有历史记录加载到协调者上下文。只按已有授权交付；首次安装不会自动创建 Run、Issue、订阅或开发任务。
+
+## v1.0.2 升级说明
+
+Webhook 服务地址无默认值；使用前先设置 `WATCH_URL`，将 `https://<your-webhook-host>` 替换为实际服务地址。未设置时 `W` 提示配置，不启动 watcher。此前 v1.0.1 功能保持不变。
 
 ## v1.0.1 升级说明
 
