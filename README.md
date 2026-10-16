@@ -4,6 +4,14 @@
 
 面向 Orca 的目标驱动开发套件：从仓库探查、需求确认和 GitHub Issue 开始，由协调者安排独立 Agent 开发、评审与修复，最终按授权交付。协调者不代替 worker 写业务实现。
 
+## 版权与使用许可
+
+**Copyright (c) 2026 LambdaTheory. All rights reserved.**
+
+代码公开可读。**未经 LambdaTheory 事先书面许可，不得使用、修改或分发其享有版权的原创代码与文档。** 该部分不提供开源许可证，详见根目录 [LICENSE](LICENSE)。
+
+第三方组件继续遵循各自已有的 MIT、Apache 等许可证；本声明不覆盖这些许可。来源与许可索引见 [NOTICE.md](NOTICE.md)。
+
 ## 版本与下载
 
 - 套件版本由根目录 `VERSION` 记录；这是整个套件的版本，不改变内含第三方 skill 的上游版本号。
@@ -59,6 +67,8 @@
 - 用 webhook 等待 Issue 回复时，按平台的命令参考配置 `WATCH_URL` 和消息凭据；发布包不包含令牌，不会替你创建订阅或启动 watcher。
 
 ## 安装
+
+以下安装与运行说明供已获相应许可的用户参考。
 
 可以直接从本仓库使用，也可以将**所选平台**的 `skills/` 内容放到你的 Agent 支持的技能目录。下面以项目级 `.agents/skills/` 为例；若客户端不扫描此位置，请按客户端约定安装，不要假定复制后所有 Agent 都会自动发现。
 
@@ -144,4 +154,4 @@ v1.0.1 的两平台脚本均在 macOS 运行回归；Windows 原生 `.cmd` 启�
 
 ## 来源与许可文件
 
-见 [NOTICE.md](NOTICE.md)。各平台目录保留 Matt Pocock 套件的 `LICENSE.matt-pocock` 和 `html-plan/LICENSE`；没有用一个新的统一许可证替换原许可文件。
+LambdaTheory 原创部分适用根目录 [LICENSE](LICENSE) 的保留权利声明。各平台目录保留 Matt Pocock 套件的 `LICENSE.matt-pocock` 和 `html-plan/LICENSE`，第三方材料仍按其原许可处理，详见 [NOTICE.md](NOTICE.md)。
