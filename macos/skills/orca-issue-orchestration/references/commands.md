@@ -36,7 +36,17 @@ S rule "<用户已定的、所有协调者必须遵守的约定>"
 # 使用已解析的 SKILL_DIR / PY / REPO / RUN_ID
 WATCH_DIR="$REPO/.orchestration/$RUN_ID"
 WATCH_REPO="<owner/name>"
-W(){ local token="${MESSAGE_TOKEN:-}"; if [ -z "$token" ]; then token=$("$PY" -X utf8 -c 'from pathlib import Path; print((Path.home()/".config/orca-webhook/message-token").read_text().strip())') || return; fi; WATCH_URL="${WATCH_URL:-https://githubwebhook.madebynight.top}" MESSAGE_TOKEN="$token" "$PY" -X utf8 "$SKILL_DIR/scripts/webhook_watch.py" --state-dir "$WATCH_DIR" "$@"; }
+# 先在当前终端配置实际服务地址；下行仅为占位示例，不是默认值：
+# export WATCH_URL="https://<your-webhook-host>"
+W(){
+    if [ -z "${WATCH_URL:-}" ]; then
+        printf '%s\n' '未设置 WATCH_URL。请先设置 export WATCH_URL="https://<your-webhook-host>"，并将占位符替换为实际 webhook 服务地址。' >&2
+        return 2
+    fi
+    local token="${MESSAGE_TOKEN:-}"
+    if [ -z "$token" ]; then token=$("$PY" -X utf8 -c 'from pathlib import Path; print((Path.home()/".config/orca-webhook/message-token").read_text().strip())') || return; fi
+    WATCH_URL="$WATCH_URL" MESSAGE_TOKEN="$token" "$PY" -X utf8 "$SKILL_DIR/scripts/webhook_watch.py" --state-dir "$WATCH_DIR" "$@"
+}
 W init --repository-id <仓库数字ID> --subscription-key "<host>-<owner/name>-<run_id>"   # 一次性预订稳定参数，先落盘再调服务，幂等；已 init 过会跳过并重印 initial boundary 提示
 # init 之后用 gh 读取当前相关 Issue/PR 状态并处理遗漏，再挂后台等待
 W wait            # 长轮询用户 Issue 回复：拿到批次先落盘 pending，输出 changed 与 batch_id 后退出；已有未确认批次时只重放
