@@ -30,7 +30,7 @@ S set "<n>" stage=ready title="..." deps="..."                         # ready �
 S rule "<用户已定的、所有协调者必须遵守的约定>"
 ```
 
-等待策略：开发、修复和评审只等待 Orca 完成/问题事件，不并挂 GitHub watcher。只有需要 Issue 回复时才挂 webhook watcher（`webhook_watch.py`）；若只剩用户待答，不轮询 worker。开始等回复前，先执行 `W init` 固定订阅起点（服务端地址、仓库 ID、由 host/owner/name/Run 组成的稳定订阅键），再用 `gh` 读取相关 Issue 的当前评论和任务状态、处理遗漏，最后挂 `W wait`；校对的是 GitHub 当前业务状态，不是事件序号。`W wait` 返回批次后先做业务处理与状态记录，`W ack --batch-id <id>` 确认成功后再重新挂 `W wait` 续等；本地存在未确认批次时 `W wait` 只重放提示，先处理或 ack，不取新批次。等待期间不反复写“继续等待”的评论或 note；无新事件不唤醒协调模型。脚本须在支持后台任务的入口运行，避免前台工具超时杀掉等待者。连接故障只报告一次，保留进度，不自动反复创建新等待任务；故障恢复后再续接。`W` 正常退出（拿到或重放批次）表示变化，非零退出表示认证、网络或状态目录故障（退出码 3 认证、4 网络），不当成“没有变化”；状态目录绑定规范化后的服务端地址与订阅参数，不得更换服务端后复用旧状态目录。
+等待策略：开发、修复和评审使用 Orca 完成/问题事件及等待器内的低频只读健康检查，不并挂 GitHub watcher。只有需要 Issue 回复时才挂 webhook watcher（`webhook_watch.py`）；若只剩用户待答，不轮询 worker。开始等回复前，先执行 `W init` 固定订阅起点（服务端地址、仓库 ID、由 host/owner/name/Run 组成的稳定订阅键），再用 `gh` 读取相关 Issue 的当前评论和任务状态、处理遗漏，最后挂 `W wait`；校对的是 GitHub 当前业务状态，不是事件序号。`W wait` 返回批次后先做业务处理与状态记录，`W ack --batch-id <id>` 确认成功后再重新挂 `W wait` 续等；本地存在未确认批次时 `W wait` 只重放提示，先处理或 ack，不取新批次。等待期间不反复写“继续等待”的评论或 note；无新业务事件或健康异常不唤醒协调模型。脚本须在支持后台任务的入口运行，避免前台工具超时杀掉等待者。连接故障只报告一次，保留进度，不自动反复创建新等待任务；故障恢复后再续接。`W` 正常退出（拿到或重放批次）表示变化，非零退出表示认证、网络或状态目录故障（退出码 3 认证、4 网络），不当成“没有变化”；状态目录绑定规范化后的服务端地址与订阅参数，不得更换服务端后复用旧状态目录。
 
 ```text
 # 使用已解析的 SKILL_DIR / PY / REPO / RUN_ID
@@ -66,14 +66,25 @@ orca orchestration worker-start --spec "$(cat fix.txt)" --terminal <开发者 ha
 # 否则在同 worktree 新派修复 worker（二选一，不复用已释放 handle）
 orca orchestration worker-start --spec "$(cat fix.txt)" --agent "<开发Agent>" --worktree "id:<repoId>::<path>" --run "$RUN_ID" --json
 # 等待：挂后台。空心跳在脚本里 ack，不会把 “You have 1 orchestration message” 送进模型。
-# 退出码 0 时 stdout 是需要处理的那次 check JSON。处理完用其中的 deliveryId 重新挂上。
-# 不要再另开 check --wait，也不要漏掉 --ack，否则同一批会立刻再交出来。
+# 退出码 0：普通 check JSON 或 kind=health_alert，先区分类型；非零是查询/执行错误。
+# 普通批次处理完用真实 deliveryId 续等；health_alert 没有伪造的 deliveryId，处置方式见下文。
+# 不要另开 check --wait；原批次未处理完不能 ack。
 "$PY" -X utf8 "$SKILL_DIR/scripts/orch_wait.py" --run "$RUN_ID"   # run_in_background
 orca orchestration reply --id <msg> --body "<答复>" --json
 "$PY" -X utf8 "$SKILL_DIR/scripts/orch_wait.py" --run "$RUN_ID" --ack <delivery>   # run_in_background
 orca orchestration worker-retain --dispatch <开发 dispatch>   # 仅用户授权保留已结算开发终端时执行；否则 worker-release
 orca orchestration worker-release --dispatch <dispatch>       # 评审者完成后、或合并后释放
 ```
+
+### 等待器健康检查与输出
+
+`orch_wait.py` 默认启用健康检查，仍只占用一个 Orca 长等待者。启动建立观测基线，每轮检查后默认间隔 60 秒（`--health-interval`）；`--timeout-ms` 是单次长等待上限，实际会截短到下次检查时刻。存活心跳不会推迟检查，也不算业务进展。只读查询单次最多 30 秒、每轮预算 60 秒、最多 20 页；这些是查询边界，不是 worker 执行超时。慢查询会延后检测，超预算/不支持接口/缺少必要字段明确报告 `health_probe_failed`，不静默降级为无限等待。
+
+- 当前 Run 活跃 Dispatch 的 done/idle 状态及可见进展持续不变，至少两次观测且达到 `--idle-grace`（默认 120 秒），报告 `turn_ended_without_report`。
+- 状态/活动及可用输出时间均无变化达到 `--stale-after`（默认 900 秒），仅报告 `suspected_stall`；长计算、工具运行和不可见输出都可能触发，不等于 worker 死亡。明确正常长任务可在核实后调整阈值，不能假称一直在推进。
+- 人工输入提示、已退出、状态未知、待收尾分别报告 `needs_input`、`worker_exited`、`worker_unverifiable`、`settlement_pending`。已结算且已释放/保留的历史 Dispatch 不触发异常；没有活动任务则返回 `no_active_workers`，让协调者决定结束或转用户等待。
+- 健康提醒输出 `kind=health_alert`、Run/Task/Dispatch、观测事实及只读核查命令，不伪造完成事件。输出前做一次非长等待消息检查，真实业务批次优先原样返回。健康提醒上的 `ack_pending` 仅是已识别空心跳但尚未确认的 delivery；处理提醒后可在续等时带它确认。若非零错误带 `ack_pending`，确认请求结果可能未知，须先对账，不能盲目重发或把它当业务消息已处理的证明。
+- 提醒后脚本退出一次，协调者必须核实并记录恢复/继续观察/阻断等决定，再决定是否重挂。观测基线只保存在当前进程，重挂会重新计时；不得反复重挂来掩盖同一异常。该机制不负责重启已退出的协调会话或宿主进程。
 
 ### 派发凭据与角色检查
 

@@ -1,6 +1,6 @@
 # Orca Issue Orchestration Skill Suite
 
-**当前版本：v1.0.0** · Windows / macOS 双平台 · 11 个项目级 skills
+**当前版本：v1.0.1** · Windows / macOS 双平台 · 11 个项目级 skills
 
 面向 Orca 的目标驱动开发套件：从仓库探查、需求确认和 GitHub Issue 开始，由协调者安排独立 Agent 开发、评审与修复，最终按授权交付。协调者不代替 worker 写业务实现。
 
@@ -8,13 +8,13 @@
 
 - 套件版本由根目录 `VERSION` 记录；这是整个套件的版本，不改变内含第三方 skill 的上游版本号。
 - 源码分别位于 `windows/skills/` 和 `macos/skills/`，按实际执行宿主选择，不能混装两份同名 skill。
-- 在本仓库 Releases 中下载 `v1.0.0` 的对应 ZIP。两个包均包含完整的 11 个 skills、平台说明和许可文件。
+- 在本仓库 Releases 中下载 `v1.0.1` 的对应 ZIP。两个包均包含完整的 11 个 skills、平台说明和许可文件。
 - `SHA256SUMS.txt` 用于核对下载文件；变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 执行宿主 | 源码 | Release 文件 |
 |---|---|---|
-| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v1.0.0-windows.zip` |
-| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v1.0.0-macos.zip` |
+| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v1.0.1-windows.zip` |
+| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v1.0.1-macos.zip` |
 
 ## 核心流程
 
@@ -25,7 +25,7 @@
 ```
 
 - 默认串行执行；开发、修复、评审及原生子代理共用模型并发额度，已有项目约定优先。
-- 空超时和存活心跳由等待脚本处理，不反复唤醒协调模型。
+- 空超时和存活心跳由等待脚本处理，不反复唤醒协调模型；脚本默认每轮检查后间隔 60 秒只读检查 worker，done/idle 未结算持续 120 秒或无可见进展 900 秒时发出核查提醒，不自动判死或重派。
 - 状态默认读取当前摘要，详细记录按需读取。
 - 默认一次独立评审；复用同 SHA、环境与范围未变的有效测试证据，不默认重复全量测试或 build。
 - 主入口保持简短；准备、命令、操作和恢复细则保留在 `references/`，进入相应阶段再读取。
@@ -69,7 +69,7 @@
 ```powershell
 git clone https://github.com/LambdaTheory/orca-issue-orchestration.git
 cd orca-issue-orchestration
-git checkout v1.0.0
+git checkout v1.0.1
 # 首次安装到目标项目；把路径替换为实际项目目录。
 $Destination = "E:/your-project/.agents/skills"
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
@@ -83,7 +83,7 @@ Copy-Item -Path "./windows/skills/*" -Destination $Destination -Recurse
 ```bash
 git clone https://github.com/LambdaTheory/orca-issue-orchestration.git
 cd orca-issue-orchestration
-git checkout v1.0.0
+git checkout v1.0.1
 # 首次安装到目标项目；把路径替换为实际项目目录。
 DEST="/path/to/your-project/.agents/skills"
 mkdir -p "$DEST"
@@ -113,7 +113,9 @@ cp -R macos/skills/. "$DEST/"
 
 ## 平台差异与维护
 
-两版不是运行时自动切换：Windows 保留 PowerShell 命令和 Windows 测试启动器；macOS 保留 bash/zsh 命令与 Mac 已有后续修正。首版的 macOS webhook 消费者包含独立的旧评论编辑事件修正，Windows 快照尚未同步这项后续改动；本次发布不擅自改写两边行为。
+两版不是运行时自动切换：Windows 保留 PowerShell 命令和 Windows 测试启动器；macOS 保留 bash/zsh 命令。v1.0.1 两端均包含 worker 健康检查、webhook 初始化提示修正和旧评论编辑事件回归测试。
+
+升级时已运行的旧等待进程不会热加载新版。由原协调者在安全切换点核对未处理批次、停止自己持有的旧等待任务，再启动新版；不能同时挂两个长等待者。`health_alert` 是本地核查提醒，不是 worker_done 或死亡证明。它不负责在协调会话退出或宿主重启后自动拉起会话。
 
 - 改共享逻辑时分别核对两版，不用一份平台目录直接覆盖另一份。
 - 改平台命令时只改对应目录，并保留路径/解释器变量约定。
@@ -133,6 +135,8 @@ node --test windows/skills/html-plan/runtime/pack.test.mjs
 python3 -X utf8 -B -m unittest discover -s macos/skills/orca-issue-orchestration/scripts -p '*_test.py'
 node --test macos/skills/html-plan/runtime/pack.test.mjs
 ```
+
+v1.0.1 的两平台脚本均在 macOS 运行回归；Windows 原生 `.cmd` 启动、PowerShell 命令及实际 Orca 入口未在 Windows 实机复验，不能把这些结果视为 Windows 端到端认证。webhook 编辑事件使用本地模拟验证，未验证线上服务投递。
 
 这些是现有脚本的定向回归，不会新建真实开发任务或启动真实 GitHub 监听。完整 Orca 编排仍依赖用户的 Agent、模型、仓库和本机环境；本 Release 不宣称已在所有组合上跑过完整流程。
 

@@ -133,6 +133,12 @@ FAKE_ORCA = r'''#!/usr/bin/env python3
 import json, os, sys
 log = os.environ["ORCH_FAKE_LOG"]
 plan = json.loads(os.environ["ORCH_FAKE_PLAN"])
+if "worker-list" in sys.argv:
+    print(json.dumps({"ok": True, "result": {"workers": [{"runId": "run_test", "dispatchId": "ctx_test", "taskId": "task_test", "dispatchStatus": "dispatched", "terminalState": "active"}]}}))
+    sys.exit(0)
+if "worker-show" in sys.argv:
+    print(json.dumps({"ok": True, "result": {"dispatch": {"id": "ctx_test", "runId": "run_test", "status": "dispatched"}, "projection": {"stage": {"activity": "working"}, "liveness": {"verdict": "live"}}, "observation": {"agentWait": None}}}))
+    sys.exit(0)
 with open(log, "r", encoding="utf-8") as f:
     n = sum(1 for line in f if line.strip())
 with open(log, "a", encoding="utf-8") as f:
@@ -241,6 +247,153 @@ class Cli(unittest.TestCase):
             self.assertEqual(proc.returncode, 1)
             self.assertEqual(json.loads(proc.stdout)["error"]["code"], "check_failed")
             self.assertNotIn("Traceback", proc.stderr)
+
+
+class Health(unittest.TestCase):
+    def setUp(self):
+        self.now = 0
+        self.row = {"runId": "r", "dispatchId": "d", "taskId": "t",
+                    "dispatchStatus": "dispatched", "terminalState": "active"}
+        self.detail = {"dispatch": {"id": "d", "runId": "r", "taskId": "t", "status": "dispatched"},
+                       "projection": {"stage": {"activity": "working", "worker": "ready"},
+                                      "liveness": {"verdict": "live"}},
+                       "observation": {"agentWait": None}, "terminal": {"lastOutputAt": 1}}
+        self.calls = []
+        self.health = orch_wait.WorkerHealth("orca", "r", clock=lambda: self.now,
+                                             request=self.request)
+
+    def request(self, cmd, timeout):
+        self.calls.append(cmd)
+        self.assertGreater(timeout, 0)
+        if "worker-list" in cmd:
+            self.assertIn("--include-remote", cmd)
+            self.assertEqual(cmd[cmd.index("--run") + 1], "r")
+            return env({"workers": [self.row], "scope": {"run": "r"}})
+        self.assertIn("worker-show", cmd)
+        return env(self.detail)
+
+    def reason(self):
+        result = self.health.probe()
+        self.assertEqual(result["kind"], "health_alert")
+        self.assertNotIn("deliveryId", result)
+        return result["alerts"][0]["reason"]
+
+    def test_done_live_requires_grace_not_heartbeat_refresh(self):
+        self.detail["projection"]["stage"]["activity"] = "done"
+        self.assertIsNone(self.health.probe())
+        self.now = 60
+        self.detail["dispatch"]["lastHeartbeatAt"] = "new"
+        self.detail["projection"]["liveness"]["observedAt"] = 60
+        self.assertIsNone(self.health.probe())
+        self.now = 120
+        self.assertEqual(self.reason(), "turn_ended_without_report")
+
+    def test_real_progress_resets_stale_deadline(self):
+        self.assertIsNone(self.health.probe())
+        self.now = 899
+        self.assertIsNone(self.health.probe())
+        self.detail["terminal"]["lastOutputAt"] = 2
+        self.now = 900
+        self.assertIsNone(self.health.probe())
+        self.now = 1799
+        self.assertIsNone(self.health.probe())
+        self.now = 1800
+        self.assertEqual(self.reason(), "suspected_stall")
+
+    def test_wait_unknown_exit_and_settlement_are_distinct(self):
+        self.detail["observation"]["agentWait"] = {"reason": "permission"}
+        self.assertEqual(self.reason(), "needs_input")
+        del self.detail["observation"]["agentWait"]
+        self.detail["projection"]["liveness"]["verdict"] = "unverifiable"
+        self.assertEqual(self.reason(), "worker_unverifiable")
+        self.detail["projection"]["liveness"]["verdict"] = "exited"
+        self.assertEqual(self.reason(), "worker_exited")
+        self.detail["dispatch"]["status"] = "completed"
+        self.assertEqual(self.reason(), "settlement_pending")
+
+    def test_released_history_does_not_get_inspected(self):
+        self.row.update(dispatchStatus="completed", terminalState="released")
+        self.assertEqual(self.reason(), "no_active_workers")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_missing_worker_is_unknown_not_dead(self):
+        self.assertIsNone(self.health.probe())
+        self.health.request = lambda cmd, timeout: env({"workers": []})
+        self.now = 60
+        self.assertEqual(self.reason(), "worker_missing")
+
+    def test_pagination_finds_active_worker_and_rejects_cycle(self):
+        def pages(cmd, timeout):
+            if "worker-show" in cmd:
+                return env(self.detail)
+            if "--cursor" not in cmd:
+                return env({"workers": [], "page": {"hasMore": True, "nextCursor": "p2"}})
+            return env({"workers": [self.row], "page": {"hasMore": False}})
+        self.health.request = pages
+        self.assertIsNone(self.health.probe())
+        self.assertIn("d", self.health.observed)
+        self.health.request = lambda cmd, timeout: env({"workers": [], "page": {"hasMore": True, "nextCursor": "p2"}})
+        self.assertEqual(self.reason(), "health_probe_failed")
+
+    def test_wrong_run_detail_is_not_used(self):
+        self.detail["dispatch"]["runId"] = "another_run"
+        self.assertEqual(self.reason(), "health_probe_failed")
+
+    def test_slow_query_budget_is_reported_not_silent(self):
+        def slow_list(cmd, timeout):
+            self.now += 61
+            return env({"workers": [self.row]})
+        self.health.request = slow_list
+        self.assertEqual(self.reason(), "health_probe_failed")
+
+    def test_probe_error_is_surfaced(self):
+        self.health.request = lambda cmd, timeout: {"ok": False, "error": {"code": "offline"}}
+        result = self.health.probe()
+        self.assertEqual(result["alerts"][0]["reason"], "health_probe_failed")
+        self.assertEqual(result["alerts"][0]["evidence"]["response"]["error"]["code"], "offline")
+
+    def test_heartbeat_stream_does_not_starve_health_and_preserves_ack(self):
+        self.detail["projection"]["stage"]["activity"] = "done"
+        acks, drains = [], []
+        def check(ack):
+            acks.append(ack)
+            self.now += 30
+            return heartbeat(delivery=f"hb{self.now}")
+        def drain(ack):
+            drains.append(ack)
+            return heartbeat(delivery="last_hb")
+        result, swallowed, code = orch_wait.run_loop(check, "initial", self.health, drain)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["kind"], "health_alert")
+        self.assertEqual(result["ack_pending"], "last_hb")
+        self.assertEqual(acks, ["initial", "hb30", "hb60", "hb90"])
+        self.assertEqual(drains, ["hb120"])
+        self.assertEqual(swallowed, 5)
+
+    def test_real_delivery_wins_alert_race(self):
+        self.health.request = lambda cmd, timeout: env({"workers": []})
+        mail = env({"deliveryId": "complete", "messages": [{"type": "worker_done"}]})
+        def no_wait(ack):
+            self.assertEqual(ack, "initial")
+            return mail
+        result, _, code = orch_wait.run_loop(lambda ack: self.fail("must not long wait"),
+                                             "initial", self.health, no_wait)
+        self.assertEqual((result, code), (mail, 0))
+
+    def test_failed_ack_check_keeps_pending_id(self):
+        self.health.request = lambda cmd, timeout: env({"workers": []})
+        result, _, code = orch_wait.run_loop(lambda ack: None, "initial", self.health,
+            lambda ack: {"ok": False, "error": {"code": "cli_timeout"}})
+        self.assertEqual(code, 1)
+        self.assertEqual(result["ack_pending"], "initial")
+
+    def test_wait_budget_and_cli_timeout(self):
+        self.assertIsNone(self.health.probe())
+        self.now = 30
+        self.assertEqual(self.health.wait_ms(1800000), 30000)
+        with patch.object(orch_wait.subprocess, "run", side_effect=subprocess.TimeoutExpired("orca", 30)):
+            result = orch_wait.orca_check("orca", "r", 1000, "", None)
+        self.assertEqual(result["error"]["code"], "cli_timeout")
 
 
 if __name__ == "__main__":

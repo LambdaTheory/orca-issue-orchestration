@@ -8,7 +8,7 @@
 
 - 位置：`<repo>/.orchestration/<run_id>/`（自动加入 `.gitignore`，只在本机）。`state.json` 是当前事实：每个 Issue 的阶段（blocked / ready / dev / review / fix / verify / merged / user_gate / closed）、PR、worktree、终端 handle、dispatch、依赖；等用户回答的问题；所有协调者必须遵守的规则；备忘。`events.md` 是只追加的事件日志，写“做了什么、为什么”。
 - 工具：`scripts/orch_state.py --repo <repo> --run <run_id> <cmd>`，命令有 `init`、`show`、`set <issue> k=v ... --why`、`ask`、`answer`、`rule`、`note`、`event`、`reviewer`（每次选择一名评审，候选可轮换）。默认 `show` 只读未完成任务关键字段、全部待答问题与用户约定、最近 3 条备注；`show --issue <n>` 查单票全部字段（含已完成票），`show --full` 显式查全部任务与备注，`--events N` 按需查历史。历史保留在文件里，不因摘要截断而删除。`active_issues` 是任务数，不是运行 Agent 数；已交付 PR 标为待合并，不计执行中。
-- 每次被唤醒（收到真实事件或用户提问）：先 `show`，需要细节再查单票；只有状态变化才 `set` / `event` / `note` 写回，不记重复等待。每票收口用 `checkpoint` 保存短结论，并记录实际 SHA、测试/评审证据位置及 `next_action`；`worker_state`、`blocker` 有变化才更新，不另建记忆系统。需要继续等事件时按等待策略挂后台。
+- 每次被唤醒（收到真实事件、等待器健康提醒或用户提问）：先 `show`，需要细节再查单票；只有状态变化才 `set` / `event` / `note` 写回，不记重复等待。每票收口用 `checkpoint` 保存短结论，并记录实际 SHA、测试/评审证据位置及 `next_action`；`worker_state`、`blocker` 有变化才更新，不另建记忆系统。需要继续等事件时按等待策略挂后台。
 - 用户在对话中做的决定，当场写成 `rule`（并同步 SPEC / 票据）；向用户提的问题写成 `ask`，得到回答后 `answer`。
 - worker 的长报告不贴进对话：结论写入 `state.json`，原文留在 PR 评论或 worker 输出里，需要时再读。
 - 接手：新协调者（任何 Agent）执行 `orca orchestration run-use --id <run_id>` 绑定 Run，读本 skill、项目编排配置和 `show`，按需查 `show --issue <n>` / `--events N` 即可继续；不需要旧对话。交接前确认没有处于“已提问未回复”的 worker。

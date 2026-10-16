@@ -24,8 +24,9 @@
 行为要点:
     - init 先把稳定参数写入 webhook-watch.json 再调用服务，失败重试不会重复登记参数；
       已成功初始化后再次 init 直接跳过（幂等，不重复创建 consumer）。
-    - init 输出 initial boundary 提示：该序号为订阅时刻的服务端边界，
-      首次读取 GitHub 后需人工校对（详见迁移文档，无额外确认文件）。
+    - init 输出 initial boundary 提示：该序号仅记录订阅时刻的服务端边界，
+      init 后用 gh 核对相关 Issue/PR 当前业务状态并处理遗漏，再运行 wait；
+      无需人工核对事件序号，也不新增用户确认步骤。
     - wait 本地存在未确认批次时只重放提示（先处理/ack，不取新批次）；
       空批次在内部继续长轮询，直到拿到批次后：先原子落盘 pending，再打印
       changed 摘要与 batch_id 提示，退出码 0。不自动 ack。
@@ -263,8 +264,9 @@ def _print_batch(events: list, batch_id: str, replay: bool) -> None:
 def _print_init_hint(state: dict) -> None:
     boundary = state.get("initial_boundary_seq")
     if boundary is not None:
-        print("提示: initial boundary seq=%s 是订阅时刻的服务端边界，"
-              "首次读取 GitHub 后需人工校对其正确性（详见迁移文档）。" % boundary)
+        print("提示: initial boundary seq=%s 仅记录订阅时刻的服务端边界。"
+              "请用 gh 核对相关 Issue/PR 的当前业务状态并处理遗漏，再运行 wait；"
+              "无需人工核对事件序号，也不新增用户确认步骤。" % boundary)
 
 
 # ---------------------------------------------------------------- 子命令

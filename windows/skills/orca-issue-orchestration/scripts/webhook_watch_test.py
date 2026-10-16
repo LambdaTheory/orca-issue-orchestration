@@ -140,11 +140,18 @@ class InitTests(WatcherCase):
             else (404, ERR_BODY)  # noqa: E731
         self.install(ok)
         out = self.do_init("https://fake.invalid", key="run-abc")
+        self.assertIn("initial boundary seq=5", out)
+        self.assertIn("当前业务状态", out)
+        self.assertIn("无需人工核对事件序号", out)
+        self.assertNotIn("迁移文档", out)
         # 已初始化：再次 init 离线幂等跳过，不发起任何请求
         rc, out, err = self.run_cli(
             ["init", "--repository-id", "1001", "--subscription-key", "run-abc"])
         self.assertEqual(rc, 0, err)
         self.assertIn("跳过重复创建", out)
+        self.assertIn("当前业务状态", out)
+        self.assertIn("无需人工核对事件序号", out)
+        self.assertNotIn("迁移文档", out)
         state = self.state()
         self.assertEqual(state["consumer_id"], "c-1")
         self.assertEqual(state["subscription_key"], "run-abc")
@@ -358,6 +365,49 @@ class WaitTests(WatcherCase):
         self.assertIn("changed: octo/hello issue42", out)
         self.assertIn("batch_id: b2", out)
         self.assertEqual(self.state()["pending"]["batch_id"], "b2")
+
+    def test_edited_comment_same_id_is_delivered_replayed_and_acked(self):
+        created = dict(sample_event(seq=6), comment_id=123)
+        edited = dict(created, seq=7, action="edited")
+        batches = [batch_payload("created-batch", [created]),
+                   batch_payload("edited-batch", [edited])]
+        gets, acks = [], []
+
+        def fn(rec):
+            initialized = self._init_ok_fn(rec)
+            if initialized:
+                return initialized
+            if rec.method == "GET" and base_path(rec).endswith("/events"):
+                gets.append(rec.path)
+                return 200, batches[len(gets) - 1]
+            if rec.method == "POST" and base_path(rec).endswith("/ack"):
+                acks.append(json.loads(rec.body)["batch_id"])
+                return 200, {"ok": True, "batch_id": acks[-1]}
+            return 404, ERR_BODY
+
+        self.install(fn)
+        self.do_init("https://fake.invalid")
+        rc, _, err = self.run_cli(["wait"])
+        self.assertEqual(rc, 0, err)
+        rc, _, err = self.run_cli(["ack", "--batch-id", "created-batch"])
+        self.assertEqual(rc, 0, err)
+
+        rc, out, err = self.run_cli(["wait"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("issue42 issue_comment/edited", out)
+        self.assertIn("comment_id=123", out)
+        self.assertEqual(self.state()["pending"]["events"], [edited])
+        self.assertEqual(acks, ["created-batch"])  # 编辑事件不能自动确认
+        rc, out, err = self.run_cli(["wait"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("重放", out)
+        self.assertIn("issue_comment/edited", out)
+        self.assertEqual(len(gets), 2)
+
+        rc, _, err = self.run_cli(["ack", "--batch-id", "edited-batch"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(acks, ["created-batch", "edited-batch"])
+        self.assertIsNone(self.state()["pending"])
 
     def test_wait_pr_event_fields(self):
         ev = {"seq": 3, "event": "push", "action": "", "repository_id": 1001,
