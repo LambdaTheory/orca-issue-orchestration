@@ -30,27 +30,25 @@ S set "<n>" stage=ready title="..." deps="..."                         # ready �
 S rule "<用户已定的、所有协调者必须遵守的约定>"
 ```
 
-等待策略：开发、修复和评审使用 Orca 完成/问题事件及等待器内的低频只读健康检查，不并挂 GitHub watcher。只有需要 Issue 回复时才挂 webhook watcher（`webhook_watch.py`）；若只剩用户待答，不轮询 worker。开始等回复前，先执行 `W init` 固定订阅起点（服务端地址、仓库 ID、由 host/owner/name/Run 组成的稳定订阅键），再用 `gh` 读取相关 Issue 的当前评论和任务状态、处理遗漏，最后挂 `W wait`；校对的是 GitHub 当前业务状态，不是事件序号。`W wait` 返回批次后先做业务处理与状态记录，`W ack --batch-id <id>` 确认成功后再重新挂 `W wait` 续等；本地存在未确认批次时 `W wait` 只重放提示，先处理或 ack，不取新批次。等待期间不反复写“继续等待”的评论或 note；无新业务事件或健康异常不唤醒协调模型。脚本须在支持后台任务的入口运行，避免前台工具超时杀掉等待者。连接故障只报告一次，保留进度，不自动反复创建新等待任务；故障恢复后再续接。`W` 正常退出（拿到或重放批次）表示变化，非零退出表示认证、网络或状态目录故障（退出码 3 认证、4 网络），不当成“没有变化”；状态目录绑定规范化后的服务端地址与订阅参数，不得更换服务端后复用旧状态目录。
+等待策略：GitHub watcher（`webhook_watch.py`）覆盖当前工作范围内所有未关闭的 Issue 及关联 PR，不局限于正在等回复的用户节点。范围以本次确认需求对应的真实票号清单为准（含后续授权新增的决策/验收/实现票），不是仓库所有历史开放票；新建票立即登记，不能因未派 worker 而漏掉用户决策票。有开放票就保持一个有效 GitHub watcher；开发、修复和评审另用 Orca 事件等待及低频健康检查，两种通道可并存，各自保持单实例。若只剩用户待答，不轮询 worker，但不能停 GitHub watcher。首次纳入开放票后、进入等待前，先执行 `W init` 固定订阅起点（服务端地址、仓库 ID、由 host/owner/name/Run 组成的稳定订阅键），再用 `gh` 读取相关 Issue 的当前评论和任务状态、处理遗漏，最后挂 `W wait`；校对的是 GitHub 当前业务状态，不是事件序号。`W wait` 返回批次后先做业务处理与状态记录，`W ack --batch-id <id>` 确认成功后再重新挂 `W wait` 续等；本地存在未确认批次时 `W wait` 只重放提示，先处理或 ack，不取新批次。等待期间不反复写“继续等待”的评论或 note；无新业务事件或健康异常不唤醒协调模型。脚本须在支持后台任务的入口运行，避免前台工具超时杀掉等待者。连接故障只报告一次，保留进度，不自动反复创建新等待任务；故障恢复后再续接。`W` 正常退出（拿到或重放批次）表示变化，非零退出表示认证、网络或状态目录故障（退出码 3 认证、4 网络），不当成“没有变化”；状态目录绑定规范化后的服务端地址与订阅参数，不得更换服务端后复用旧状态目录。
 
 ```text
 # PowerShell：使用上面已经解析的 $SKILL_DIR、$REPO、$RUN_ID
 $WatchDir = Join-Path $REPO ".orchestration/$RUN_ID"
 $WatchRepo = "<owner/name>"
-# 先在当前终端配置实际服务地址；下行仅为占位示例，不是默认值：
-# $env:WATCH_URL = "https://<your-webhook-host>"
 function W {
-    if ([string]::IsNullOrWhiteSpace($env:WATCH_URL)) {
-        throw '未设置 WATCH_URL。请先设置 $env:WATCH_URL = "https://<your-webhook-host>"，并将占位符替换为实际 webhook 服务地址。'
-    }
     $previousToken = $env:MESSAGE_TOKEN
+    $previousUrl = $env:WATCH_URL
     try {
         if (-not $env:MESSAGE_TOKEN) {
             $tokenFile = Join-Path $HOME ".config/orca-webhook/message-token"
             $env:MESSAGE_TOKEN = (Get-Content -LiteralPath $tokenFile -Raw -ErrorAction Stop).Trim()
         }
+        if (-not $env:WATCH_URL) { $env:WATCH_URL = "https://githubwebhook.madebynight.top" }
         & $PY -X utf8 "$SKILL_DIR/scripts/webhook_watch.py" --state-dir $WatchDir @args
     } finally {
         $env:MESSAGE_TOKEN = $previousToken
+        $env:WATCH_URL = $previousUrl
     }
 }
 W init --repository-id <仓库数字ID> --subscription-key "<host>-<owner/name>-<run_id>" # 先固定订阅起点；重复 init 幂等
@@ -66,6 +64,15 @@ $LegacyWatcher = (Join-Path $SKILL_DIR "scripts/gh_watch.sh").Replace('\', '/')
 & $GitBash $LegacyWatcher --resync # 先检查 absorbed 输出并处理夹带变化，再运行下一行
 & $GitBash $LegacyWatcher
 ```
+
+### GitHub watcher 保持与停止条件
+
+- 每次收到 GitHub 批次，逐项核对是否属于当前工作票号或关联 PR，处理/去重并保存结果后 ACK；仓库级订阅中的无关事件明确忽略并 ACK，不扩大任务范围。自身产生的状态评论不重复回复，避免通知循环。
+- 处理批次的短暂间隙不算放弃监听。ACK 后、结束本轮答复前，检查当前工作票号清单：只要还有开放票或状态未知，立即重新挂 `W wait` 并保存真实后台任务 handle。回退 Git Bash 旧脚本同样在一次变化退出、处理完成后重新挂，不能处理一条回复就结束订阅。
+- 保存监听检查点：当前工作票号、`watcher_mode`（webhook/gh）、真实后台 handle、`watcher_status`（running/processing/recovering/blocked/stopped）、阻断原因。没有开发 Run 时沿用已有初始化/建票记录，不为监听单独创建开发 Run。只有实际启动成功且未见退出回执才记录 running，不把无关的 `orch_wait.py` 算作 GitHub 监听。
+- 长期等验收、用户说“以后回复”、PR 已合并、worker 全部释放，均不能作为主动停止 GitHub watcher 的理由。允许模型空闲和结束当前回复轮次，但必须保持可接收后台完成通知的宿主会话；宿主不支持跨轮后台续跑时明确报告监听阻断，不能承诺未来自动唤醒。
+- 服务部署造成 watcher 非零退出是连接中断，不是工作完成。保留 consumer/pending，记录 recovering，按当前错误和既有恢复机制在服务恢复后续接原订阅；原 watcher 已停止且项目允许时可使用 Git Bash 旧脚本维持监听。不能反复刷同一错误，也不能无人监听却称“等你 Issue 回复”。无法恢复则记录 blocked 并明确通知用户。这里不改变重定向拒绝或网络重试实现。
+- 只有重新查询当前工作范围内每张 Issue，确认全部 CLOSED，且已收到的批次/同步待办处理完，才记录停止依据并停止 GitHub watcher；关闭不等于验收通过，仍按实际结果结算。查询失败则保留监听/阻断状态。用户明确暂停/取消可停止并记原因；交接需确认新协调者接管原 consumer 和重挂责任，避免双实例及无主监听。
 
 凭据文件仅供 `W` 内部读取并传给 watcher；不要用 Read 等工具打开、打印或写入任务状态。
 
