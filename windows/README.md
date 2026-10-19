@@ -1,4 +1,4 @@
-# Orca Issue Orchestration · windows · v1.0.2
+# Orca Issue Orchestration · windows · v1.0.3
 
 本平台包含完整 11 个 skills，使用 PowerShell 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
 
@@ -12,9 +12,13 @@
 
 按需读取参考文档，不把所有历史记录加载到协调者上下文。只按已有授权交付；首次安装不会自动创建 Run、Issue、订阅或开发任务。
 
-## v1.0.2 升级说明
+## v1.0.3 升级说明
 
-Webhook 服务地址无默认值；使用前先设置 `WATCH_URL`，将 `https://<your-webhook-host>` 替换为实际服务地址。未设置时 `W` 提示配置，不启动 watcher。此前 v1.0.1 功能保持不变。
+当前工作范围内还有未关闭的 Issue 时持续保留 GitHub watcher；处理批次并 ACK 后重挂，不能因长期验收或 PR 已交付停挂。GitHub 监听和 Orca worker 等待各自单实例，可并存。已有会话需由原协调者读取新规则并核对实际监听状态，不会自动热更新。
+
+## Webhook 地址配置
+
+Webhook 服务地址默认 `https://githubwebhook.madebynight.top`；需要时设置环境变量 `WATCH_URL` 覆盖。此前 v1.0.1 功能保持不变。
 
 ## v1.0.1 升级说明
 

@@ -24,7 +24,8 @@
 - 最大并发：1（已有明确约定优先）；同一模型服务的开发、修复、评审和原生子代理共用额度
 - 启动核实：<实际 Agent、配置模型、向导就绪与启动回执；structured/terminal 类型及可用读取入口>
 - 临时故障：503/断流先对账、取回已完成报告；按 Orca 恢复指引，同一任务最多自动重试 2 次，不重复派发；未知状态不判死亡，无变化配置错误不重试
-- 等待：开发评审用 Orca 事件及同一等待脚本的低频只读健康检查；只等 Issue 回复才挂 GitHub watcher（webhook）：先 init 固定订阅起点、gh 校对相关任务当前状态，再挂 wait；事件处理与状态记录完成并 ack 后才继续等待；空超时与存活心跳留在后台脚本，不周期唤醒模型
+- 等待：当前工作范围内有未关闭 Issue 就保持一个 GitHub watcher（webhook 或已配置的 gh 回退），开发评审/PR交付/长期待验收都不能停挂。先 init、gh 校对当前状态，再 wait；处理并 ack 后仍有开放票就重挂。开发评审另挂 Orca 事件/健康检查，仅用户待答时只停 worker 等待，不停 GitHub 通道；空等待不周期唤醒模型
+- 监听范围与检查点：<本次需求对应票号清单，含新增用户节点；watcher mode/真实后台 handle/status。全部票查证 CLOSED 且批次处理完才停止，用户明确暂停或接管交接除外；连接中断记 recovering/blocked，不称仍在监听>
 - worker 健康检查：默认间隔 60 秒、done/idle 未结算宽限 120 秒、无可见进展阈值 900 秒；对应 orch_wait.py 的 --health-interval / --idle-grace / --stale-after。健康异常才唤醒模型，告警先核实，不自动判死或重派；仅用户待答时不启动该检查
 - Skill 安装目录：<本次加载的 SKILL.md 所在绝对目录；可由 ORCA_ISSUE_SKILL_DIR 覆盖，与项目路径分开>
 - Python 解释器：<实际 Python 3 命令或绝对路径；可由 ORCA_ISSUE_PYTHON 覆盖；Windows 默认 python，macOS 默认 python3，调用带 -X utf8>

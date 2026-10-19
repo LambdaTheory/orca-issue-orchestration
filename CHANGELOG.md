@@ -1,5 +1,14 @@
 # 变更记录
 
+## v1.0.3 — 2026-10-19
+
+- Windows / macOS 同步持续监听规则：当前工作范围内仍有未关闭或状态未知的 Issue，就保持 GitHub watcher；不因长期等待验收、PR 已交付或 worker 已释放主动停挂。
+- 明确批次处理与 ACK 后重挂、监听状态检查点、部署中断恢复和交接接管；GitHub watcher 与 Orca worker 等待器各自单实例，可并存。
+- 恢复默认 webhook 地址 `https://githubwebhook.madebynight.top`，仍允许通过 `WATCH_URL` 覆盖；撤回 v1.0.2 强制显式配置地址的要求。
+- 更新双平台规则、配置模板与安装说明；保留 LambdaTheory 版权声明及全部许可文件。运行脚本、数据库和现有测试工作区不变。
+
+验证边界：规则及命令示例修订，不代表既有会话已恢复监听；未进行 Windows 原生或线上 webhook 自动续跑验证。
+
 ## v1.0.2 — 2026-10-16
 
 - 移除平台命令参考与项目配置模板中的真实 webhook 地址，改为占位示例。
