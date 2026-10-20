@@ -167,5 +167,55 @@ class OrchStateTest(unittest.TestCase):
         self.assert_not_created()
 
 
+    def test_init_uses_clock_started_at(self):
+        clock = self.repo / ".orchestration" / "clock.json"
+        clock.parent.mkdir(parents=True)
+        clock.write_text(json.dumps({"started_at": "2026-01-01T09:00:00+00:00",
+                                     "run": None, "finished_at": None}), encoding="utf-8")
+        result = self.run_cli(self.repo, "init", "--objective", "obj", "--reviewers", "a")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.state()
+        self.assertEqual(state["started_at"], "2026-01-01T09:00:00+00:00")
+        self.assertTrue(state["initialized_at"])
+        self.assertEqual(json.loads(clock.read_text(encoding="utf-8"))["run"], "r1")
+
+    def test_stage_change_appends_history_once(self):
+        self.run_cli(self.repo, "init", "--objective", "obj", "--reviewers", "a")
+        self.run_cli(self.repo, "set", "3", "stage=ready", "title=任务")
+        self.run_cli(self.repo, "set", "3", "stage=dev", "--why", "开始开发")
+        self.run_cli(self.repo, "set", "3", "stage=dev", "title=新标题")
+        issue = self.state()["issues"]["3"]
+        self.assertEqual([(h["from"], h["to"]) for h in issue["history"]],
+                         [(None, "ready"), ("ready", "dev")])
+        self.assertEqual(issue["history"][1]["why"], "开始开发")
+        self.assertTrue(issue["stage_since"])
+
+    def test_finish_writes_timing_and_is_idempotent(self):
+        self.run_cli(self.repo, "init", "--objective", "obj", "--reviewers", "a")
+        self.run_cli(self.repo, "set", "3", "stage=dev", "title=任务")
+        first = self.run_cli(self.repo, "finish", "--reason", "completed")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("本次编排", first.stdout)
+        state = self.state()
+        self.assertEqual(state["end_reason"], "completed")
+        self.assertTrue(state["finished_at"])
+        self.assertIn("本次编排", (self.orch_dir() / "timing.md").read_text(encoding="utf-8"))
+        finished = state["finished_at"]
+        self.run_cli(self.repo, "finish", "--reason", "paused")
+        self.assertEqual(self.state()["finished_at"], finished)
+        self.assertEqual(self.state()["end_reason"], "completed")
+
+    def test_timing_json_and_show_elapsed(self):
+        self.run_cli(self.repo, "init", "--objective", "obj", "--reviewers", "a")
+        self.run_cli(self.repo, "set", "3", "stage=dev", "title=任务")
+        result = self.run_cli(self.repo, "timing", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertIn("3", data["issues"])
+        self.assertGreaterEqual(data["elapsed"], 0)
+        shown = self.run_cli(self.repo, "show")
+        self.assertIn("已运行", shown.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

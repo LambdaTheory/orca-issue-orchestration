@@ -681,5 +681,90 @@ class RealHttpTests(WatcherCase):
         self.assertNotIn("test-token", out)
 
 
+class ReuseImplTests(WatcherCase):
+    """webhook_watch 供 task_watch 复用的实现层（CLI 行为不变）。"""
+
+    def test_init_impl_with_explicit_base_and_token(self):
+        fake = self.install(lambda rec: (200, consumer_payload()))
+        state = ww.init_impl(self.sdir, "https://fake.invalid", "tok-1",
+                             "1001", "run-x", "now")
+        self.assertEqual(state["consumer_id"], "c-1")
+        self.assertEqual(self.state()["watch_url"], "https://fake.invalid")
+        self.assertEqual(len(fake.requests), 1)
+        # 幂等：重复调用（离线）跳过
+        fake2 = self.install(lambda rec: (404, ERR_BODY))
+        state = ww.init_impl(self.sdir, "https://fake.invalid", "tok-1",
+                             "1001", "run-x", "now")
+        self.assertEqual(state["consumer_id"], "c-1")
+        self.assertEqual(fake2.requests, [])
+
+    def test_poll_once_and_persist_pending_match_cli_wait(self):
+        # 先用 CLI init
+        self._init_with("https://fake.invalid",
+                        lambda rec: (200, consumer_payload()))
+        os.environ["WATCH_URL"] = "https://fake.invalid"
+        fake = self.install(
+            lambda rec: (200, batch_payload("b9", [sample_event(seq=2)])))
+        state = self.state()
+        resp = ww.poll_once("https://fake.invalid", "c-1", "tok")
+        self.assertEqual(resp["batch_id"], "b9")
+        got = ww.persist_pending(self.sdir, state, resp)
+        self.assertTrue(got)
+        saved = self.state()
+        self.assertEqual(saved["pending"]["batch_id"], "b9")
+        self.assertEqual(saved["pending"]["events"][0]["seq"], 2)
+        # 空批次：不落盘
+        self.assertFalse(ww.persist_pending(self.sdir, {"pending": None},
+                                            {"batch_id": None, "events": []}))
+        # 缺 batch_id 却有事件：报错防归属不明
+        with self.assertRaises(ww.WatcherError):
+            ww.persist_pending(self.sdir, {"pending": None},
+                               {"batch_id": None, "events": [sample_event()]})
+
+    def test_ack_impl_with_explicit_base_and_token(self):
+        self._init_with("https://fake.invalid",
+                        lambda rec: (200, consumer_payload()))
+        os.environ["WATCH_URL"] = "https://fake.invalid"
+        self.install(lambda rec: (200, batch_payload("b1", [sample_event()])))
+        rc, _, err = self.run_cli(["wait"])
+        self.assertEqual(rc, 0, err)
+        acks = []
+
+        def fn(rec):
+            if rec.method == "POST" and rec.path.endswith("/ack"):
+                acks.append(rec)
+                return 200, {"ok": True, "batch_id": "b1"}
+            return 404, ERR_BODY
+
+        self.install(fn)
+        ww.ack_impl(self.sdir, "b1", "https://fake.invalid", "file-tok")
+        self.assertIsNone(self.state()["pending"])
+        self.assertEqual(
+            (acks[0].body and json.loads(acks[0].body))["batch_id"], "b1")
+
+    def test_lock_file_rejects_other_name_busy(self):
+        # 同一目录两把不同名字的锁互不阻塞；同名锁则互斥
+        with ww._lock_file(self.sdir, "other.lock"):
+            with ww._lock_file(self.sdir, ww.LOCK_FILE):
+                pass  # webhook 锁可独立持有
+        with ww._lock_file(self.sdir, ww.LOCK_FILE):
+            with self.assertRaises(ww.LockBusy):
+                with ww._lock_file(self.sdir, ww.LOCK_FILE):
+                    pass
+
+    def test_non_object_state_is_rejected(self):
+        path = os.path.join(self.sdir, ww.STATE_FILE)
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump([], stream)
+        with self.assertRaisesRegex(ww.WatcherError, "JSON 对象"):
+            ww._load_state(self.sdir)
+
+    def test_lock_filesystem_error_is_not_busy(self):
+        with mock.patch.object(ww.os, "open", side_effect=PermissionError("denied")):
+            with self.assertRaises(PermissionError):
+                with ww._lock_file(self.sdir, "denied.lock"):
+                    self.fail("lock should not be acquired")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -7,8 +7,15 @@ returns a local kind=health_alert, never a synthetic worker_done or delivery.
 The coordinator must inspect it before resuming; this script never restarts,
 stops or releases a worker. ack_pending names only an unprocessed heartbeat ACK
 (or an ACK whose request failed and must be reconciled).
+
+With --guard-dir the same alert envelope also reports guard_unavailable (the
+guard terminal's heartbeat went stale) and guard_hold (a prompt is parked for a
+human). Both are observations: the coordinator decides, the guard never decides
+for it.
 """
 import argparse, json, math, subprocess, sys, time
+from datetime import datetime
+from pathlib import Path
 
 WAKE_TYPES = "worker_done,escalation,question,heartbeat"
 
@@ -261,6 +268,91 @@ def positive_number(value):
     return number
 
 
+class GuardHealth:
+    """Read-only view of the guard terminal state; alerts, never auto-restarts."""
+    OPEN_STATES = ("open", "denied-by-agent", "apply-failed")
+
+    def __init__(self, guard_dir, interval=60, stale_after=180, clock=time.monotonic):
+        self.dir = Path(guard_dir) if guard_dir else None
+        self.interval, self.stale_after = interval, stale_after
+        self.clock, self.next_probe = clock, clock()
+
+    def due(self):
+        return self.dir is not None and self.clock() >= self.next_probe
+
+    def wait_ms(self, requested):
+        return requested
+
+    def _fresh(self, control):
+        stamp = control.get("heartbeat_ts")
+        if not stamp:
+            return False
+        try:
+            beat = datetime.fromisoformat(stamp)
+        except ValueError:
+            return False
+        return (datetime.now().astimezone() - beat).total_seconds() <= self.stale_after
+
+    def probe(self):
+        self.next_probe = self.clock() + self.interval
+        if self.dir is None or not self.dir.exists():
+            return None
+        alerts = []
+        try:
+            control = json.loads((self.dir / "guard.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            control = {}
+        desired = control.get("desired", "unknown")
+        if desired not in ("stopped",) and not self._fresh(control):
+            alerts.append({"reason": "guard_unavailable", "evidence": {
+                "desired": desired, "heartbeat_ts": control.get("heartbeat_ts"),
+                "pid": control.get("pid")},
+                "inspect_commands": [[str(self.dir / "guard.log")]]})
+        holds = []
+        for path in sorted((self.dir / "holds").glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("state") in self.OPEN_STATES:
+                holds.append({"id": payload.get("id"), "label": payload.get("label"),
+                              "tool": payload.get("tool"), "rule": payload.get("rule"),
+                              "reason": payload.get("reason"), "state": payload.get("state")})
+        if holds:
+            alerts.append({"reason": "guard_hold", "evidence": {"holds": holds},
+                           "inspect_commands": [[str(self.dir / "audit.jsonl")]]})
+        if not alerts:
+            return None
+        return {"ok": True, "kind": "health_alert", "runId": None, "alerts": alerts,
+                "next_action": "确认 hold 的判定依据后再放行或处理；guard_unavailable 先看 guard.log 再用 guard start 幂等恢复"}
+
+
+class HealthChain:
+    """Run several health probes behind the single Health interface run_loop expects."""
+
+    def __init__(self, members):
+        self.members = [member for member in members if member is not None]
+
+    def due(self):
+        return any(member.due() for member in self.members)
+
+    def wait_ms(self, requested):
+        return min([requested, *(member.wait_ms(requested) for member in self.members)])
+
+    def probe(self):
+        alerts = []
+        for member in self.members:
+            if not member.due():
+                continue
+            envelope = member.probe()
+            if envelope:
+                alerts.extend(envelope.get("alerts") or [])
+        if not alerts:
+            return None
+        return {"ok": True, "kind": "health_alert", "runId": None, "alerts": alerts,
+                "next_action": "Inspect and record a decision before rearming; do not infer death or retry from this alert alone"}
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", required=True)
@@ -271,10 +363,15 @@ def main(argv=None):
     p.add_argument("--health-interval", type=positive_number, default=60, help="seconds between read-only probes")
     p.add_argument("--idle-grace", type=positive_number, default=120, help="seconds of unchanged done/idle before inspection")
     p.add_argument("--stale-after", type=positive_number, default=900, help="seconds without observable progress before inspection")
+    p.add_argument("--guard-dir", default="", help="guard state dir; enables guard health alerts")
+    p.add_argument("--guard-stale-after", type=positive_number, default=180, help="seconds without a guard heartbeat before inspection")
     a = p.parse_args(argv)
     if a.timeout_ms <= 0 or a.idle_grace < a.health_interval or a.stale_after < a.idle_grace:
         p.error("require timeout-ms > 0 and health-interval <= idle-grace <= stale-after")
-    health = WorkerHealth(a.orca, a.run, a.health_interval, a.idle_grace, a.stale_after)
+    health = HealthChain([
+        WorkerHealth(a.orca, a.run, a.health_interval, a.idle_grace, a.stale_after),
+        GuardHealth(a.guard_dir, a.health_interval, a.guard_stale_after) if a.guard_dir else None,
+    ])
 
     def check(ack):
         return orca_check(a.orca, a.run, health.wait_ms(a.timeout_ms), a.terminal, ack)

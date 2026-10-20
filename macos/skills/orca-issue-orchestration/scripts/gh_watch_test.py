@@ -13,9 +13,36 @@ from pathlib import Path
 SCRIPT = Path(__file__).parent / "gh_watch.sh"
 
 
+def find_git_bash():
+    """Locate a real Git Bash bash.exe. WSL (System32\\bash.exe) would get a
+    POSIX Windows path, so it is explicitly rejected."""
+    candidates = []
+    git = shutil.which("git")
+    if git:
+        for root in list(Path(git).resolve().parents)[:3]:
+            candidates.extend((root / "bin/bash.exe", root / "usr/bin/bash.exe"))
+    for key in ("ProgramW6432", "ProgramFiles"):
+        root = os.environ.get(key)
+        if root:
+            for sub in ("Git/bin/bash.exe", "Git/usr/bin/bash.exe"):
+                candidates.append(Path(root) / sub)
+    candidates += [Path(r"C:\Program Files\Git\bin\bash.exe"),
+                   Path(r"C:\Program Files (x86)\Git\bin\bash.exe")]
+    found = shutil.which("bash")
+    if found and not any(part in found.lower() for part in ("system32", "windowsapps")):
+        candidates.append(Path(found))
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    raise RuntimeError("Git Bash bash.exe not found (WSL bash is not usable here)")
+
+
 def find_bash():
-    """Locate the POSIX bash gh_watch.sh runs under. macOS ships /bin/bash
-    (3.2); a Homebrew bash earlier on PATH is preferred when present."""
+    """Locate the bash gh_watch.sh runs under. macOS ships /bin/bash (3.2); a
+    Homebrew bash earlier on PATH is preferred when present. Windows needs Git
+    Bash and must not fall back to WSL."""
+    if os.name == "nt":
+        return find_git_bash()
     for cand in (shutil.which("bash"), "/bin/bash",
                  "/opt/homebrew/bin/bash", "/usr/local/bin/bash"):
         if cand and Path(cand).is_file():
@@ -109,6 +136,9 @@ class GhWatch(unittest.TestCase):
             path = self.fake_dir / name
             self._write(path, body)
             path.chmod(path.stat().st_mode | stat.S_IEXEC)
+        if os.name == "nt":
+            self._write(self.top / "bash-env",
+                        'export PATH="$(cd "$GH_WATCH_FAKE_BIN" && pwd):$PATH"\n')
         # Probe: the fake gh must really be executable through PATH, so a
         # PATH or permission problem fails loudly here instead of confusingly later.
         probe_state = self.top / "probe_state"
@@ -137,6 +167,11 @@ class GhWatch(unittest.TestCase):
         env["WATCH_INTERVAL"] = "0"
         env["FAKE_GH_DIR"] = str(fake_state_dir)
         env["PATH"] = str(self.fake_dir) + os.pathsep + env.get("PATH", "")
+        env["GH_WATCH_FAKE_BIN"] = str(self.fake_dir)
+        if os.name == "nt":
+            # Git for Windows bin/bash.exe prepends system tools to PATH. Apply
+            # test doubles after that launcher setup, inside the spawned shell.
+            env["BASH_ENV"] = str(self.top / "bash-env")
         return env
 
     def run_watch(self, *args):
