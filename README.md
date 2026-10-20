@@ -1,6 +1,6 @@
 # Orca Issue Orchestration Skill Suite
 
-**当前版本：v1.0.3** · Windows / macOS 双平台 · 11 个项目级 skills
+**当前版本：v1.1.0** · Windows / macOS 双平台 · 11 个项目级 skills
 
 面向 Orca 的目标驱动开发套件：从仓库探查、需求确认和 GitHub Issue 开始，由协调者安排独立 Agent 开发、评审与修复，最终按授权交付。协调者不代替 worker 写业务实现。
 
@@ -16,13 +16,14 @@
 
 - 套件版本由根目录 `VERSION` 记录；这是整个套件的版本，不改变内含第三方 skill 的上游版本号。
 - 源码分别位于 `windows/skills/` 和 `macos/skills/`，按实际执行宿主选择，不能混装两份同名 skill。
+- 两平台源码只差一份 `references/commands.md`（本平台命令参考）；其余文件完全相同，避免两份手工维护产生漂移。
 - 对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从源码安装。两个平台包均包含完整的 11 个 skills、平台说明和许可文件。
 - `SHA256SUMS.txt` 用于核对下载文件；变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 执行宿主 | 源码 | Release 文件 |
 |---|---|---|
-| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v1.0.3-windows.zip` |
-| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v1.0.3-macos.zip` |
+| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v1.1.0-windows.zip` |
+| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v1.1.0-macos.zip` |
 
 ## 核心流程
 

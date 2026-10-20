@@ -1,5 +1,18 @@
 # 变更记录
 
+## v1.1.0 — 2026-10-20
+
+- 新增守护终端（guard）：编排期间在独立终端常驻。协调者或 worker 停在权限确认弹窗时，守护读取渲染后的屏幕、按静态白名单判定，命中才按键并在按键后复核弹窗是否关闭；越界、凭据、强推、越界删除等一律挂起等人，不盲发按键。判定全程写入 `audit.jsonl`，支持 `pause` 急停与幂等重启。
+- 授权边界集中在 `orch_policy.py`：产物清理（`node_modules`、`dist`、`build` 等）自动放行，删除源码目录、`git push --force`、`gh pr merge`、`gh auth` 等挂起；CodeBuddy 的 REPL 单条 Bash 调用按严格形态解包后再判定，形态不符即挂起。
+- 停摆提示独立于权限放行：只有在没有活跃 worker、没有等用户节点、没有未答问题、没有待批调用且终端静默时才提示继续，最多 3 次，不重派、不杀进程。
+- 新增时长统计：`C start/show`、`S timing`、`S finish`、`PT` 回填 PR 的「工作时长」章节；`state.json` 增加 `started_at`、`finished_at`、`stage_since`、`history`。
+- 新增每小时进展回报（`RP`）：只读 `state.json`，不改状态、不派发、不判断 worker 健康。
+- GitHub 监听改为任务级系统托管（launchd / systemd / 计划任务），`webhook_watch` 保留为历史回退；新增任务标签范围保护与对账版本。
+- 新增 PR 规范（`references/pr.md`）与四类 Issue 模板（`templates/issues`）。
+- 打包结构：双平台源码只差 `references/commands.md`，其余文件共享；新增 `orch_guard`、`orch_policy`、`orch_clock`、`orch_time`、`orch_report`、`orch_pr_timing` 及其测试。
+
+验证边界：两平台源码的 11 个测试套件在 macOS 执行通过；守护的终端注入链路在真实 Orca 终端验证过「白名单放行」与「挂起后判定放行」两条路径。未在 Windows 实机复验 PowerShell 分支，未验证线上 webhook 自动续跑。不修改现有活动 Run/worker。
+
 ## v1.0.3 — 2026-10-19
 
 - Windows / macOS 同步持续监听规则：当前工作范围内仍有未关闭或状态未知的 Issue，就保持 GitHub watcher；不因长期等待验收、PR 已交付或 worker 已释放主动停挂。

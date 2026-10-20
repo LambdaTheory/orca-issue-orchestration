@@ -10,6 +10,8 @@ import argparse, json, os, sys, tempfile
 from datetime import datetime
 from pathlib import Path
 
+import orch_time
+
 STAGES = ["blocked", "ready", "dev", "review", "fix", "verify", "merged", "user_gate", "closed"]
 
 
@@ -35,6 +37,26 @@ def log(d, text):
         f.write(f"- {stamp} {text}\n")
 
 
+def clock_path(repo):
+    return Path(repo) / ".orchestration" / "clock.json"
+
+
+def load_clock(repo):
+    try:
+        return json.loads(clock_path(repo).read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_clock(repo, data):
+    target = clock_path(repo)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=target.parent)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=1)
+    os.replace(temp, target)
+
+
 def cmd_init(a):
     d = state_dir(a.repo, a.run)
     if (d / "state.json").exists():
@@ -48,7 +70,18 @@ def cmd_init(a):
             f.write(("\n" if content and not content.endswith("\n") else "")
                     + "# Local orchestration state\n/.orchestration/\n")
     d.mkdir(parents=True, exist_ok=True)
+    started = orch_time.iso()
+    clock = load_clock(a.repo)
+    if clock.get("started_at") and not clock.get("finished_at") and (
+            not clock.get("run") or str(clock.get("run")) == str(a.run)):
+        started = clock["started_at"]
+        clock["run"] = a.run
+        save_clock(a.repo, clock)
+    elif not clock.get("started_at") or clock.get("finished_at"):
+        save_clock(a.repo, {"started_at": started, "run": a.run, "finished_at": None})
     save(d, {"run": a.run, "repo": a.repo, "objective": a.objective,
+             "started_at": started, "initialized_at": orch_time.iso(),
+             "finished_at": None, "end_reason": None,
              "settings": {"max_parallel": a.max_parallel, "reviewers": a.reviewers, "next_reviewer": 0},
              "issues": {}, "questions": [], "rules": [], "notes": []})
     log(d, f"init run {a.run}")
@@ -57,12 +90,24 @@ def cmd_init(a):
 
 def cmd_set(a):
     d = state_dir(a.repo, a.run); s = load(d)
-    it = s["issues"].setdefault(str(a.issue), {"stage": "blocked"})
+    it = s["issues"].get(str(a.issue))
+    if it is None:
+        it = s["issues"][str(a.issue)] = {"stage": "blocked"}
+        previous = None
+    else:
+        previous = it.get("stage")
     for kv in a.kv:
         k, _, v = kv.partition("=")
         if k == "stage" and v not in STAGES:
             sys.exit(f"stage must be one of {STAGES}")
         it[k] = None if v == "" else v
+    if it.get("stage") != previous:
+        moment = orch_time.iso()
+        it["stage_since"] = moment
+        entry = {"at": moment, "from": previous, "to": it.get("stage")}
+        if a.why:
+            entry["why"] = a.why
+        it.setdefault("history", []).append(entry)
     save(d, s)
     if a.why:
         log(d, f"#{a.issue} " + ", ".join(a.kv) + f" — {a.why}")
@@ -97,7 +142,9 @@ def cmd_show(a):
     active = [k for k, v in s["issues"].items()
               if v.get("stage") in ("dev", "review", "fix", "verify")
               and not (v.get("stage") == "verify" and v.get("delivery") == "pr_delivered")]
-    print(f"run {s['run']} · {s['objective']} · max_parallel={s['settings']['max_parallel']} · active_issues={len(active)} · updated {s.get('updated_at')}")
+    timing = orch_time.compute(s)
+    elapsed = f" · 已运行 {orch_time.fmt(timing['elapsed'])}" if timing.get("started_at") else ""
+    print(f"run {s['run']} · {s['objective']} · max_parallel={s['settings']['max_parallel']} · active_issues={len(active)}{elapsed} · updated {s.get('updated_at')}")
     summary_fields = ("pr", "deps", "review_head", "delivery", "delivery_sha",
                       "worker_state", "next_action", "blocker", "checkpoint")
     for k, v in sorted(s["issues"].items(), key=lambda x: (STAGES.index(x[1].get("stage", "blocked")), int(x[0]) if x[0].isdigit() else 10**9, x[0])):
@@ -119,6 +166,30 @@ def cmd_show(a):
     if a.events:
         lines = (d / "events.md").read_text(encoding="utf-8").splitlines()
         print("\n".join(lines[-a.events:]))
+
+
+def cmd_finish(a):
+    d = state_dir(a.repo, a.run); s = load(d)
+    if not s.get("finished_at"):
+        s["finished_at"] = orch_time.iso()
+        s["end_reason"] = a.reason
+        save(d, s)
+        clock = load_clock(a.repo)
+        if clock.get("started_at") and (not clock.get("run") or str(clock.get("run")) == str(a.run)):
+            clock["finished_at"] = s["finished_at"]
+            clock["run"] = a.run
+            save_clock(a.repo, clock)
+        log(d, f"finish run {a.run}: {a.reason}")
+    data = orch_time.compute(s)
+    (d / "timing.md").write_text(orch_time.text(data) + "\n", encoding="utf-8")
+    print(orch_time.text(data))
+    print("timing.md: %s" % (d / "timing.md"))
+
+
+def cmd_timing(a):
+    d = state_dir(a.repo, a.run); s = load(d)
+    data = orch_time.compute(s)
+    print(json.dumps(data, ensure_ascii=False, indent=1) if a.json else orch_time.text(data))
 
 
 def nonempty_reviewer(v):
@@ -144,4 +215,6 @@ x = sub.add_parser("show"); x.add_argument("--events", type=int, default=0); x.s
 view = x.add_mutually_exclusive_group()
 view.add_argument("--issue", help="show all fields for one issue, including completed issues")
 view.add_argument("--full", action="store_true", help="show all issues, fields and notes")
+x = sub.add_parser("finish", help="record the end time, write timing.md and print the summary"); x.add_argument("--reason", choices=["completed", "paused", "cancelled"], default="completed"); x.set_defaults(f=cmd_finish)
+x = sub.add_parser("timing", help="print elapsed, effective and waiting time by stage"); x.add_argument("--json", action="store_true"); x.set_defaults(f=cmd_timing)
 a = p.parse_args(); a.f(a)

@@ -152,8 +152,16 @@ sys.exit(item.get("exit", 0))
 
 def make_fake_orca(d, name="orca"):
     """Create a fake orca launcher: an executable shebang script, invoked by
-    absolute path so orch_wait finds it without touching PATH."""
+    absolute path so orch_wait finds it without touching PATH. Windows has no
+    shebang support, so it gets a .cmd wrapper around the same script."""
     d = Path(d)
+    if os.name == "nt":
+        script = d / (name + ".py")
+        script.write_text(FAKE_ORCA, encoding="utf-8")
+        wrapper = d / (name + ".cmd")
+        wrapper.write_text('@"%ORCH_FAKE_PYTHON%" -X utf8 "%~dp0' + name + '.py" %*\n',
+                           encoding="ascii")
+        return wrapper
     exe = d / name
     exe.write_text(FAKE_ORCA, encoding="utf-8")
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
@@ -168,6 +176,7 @@ def run_orch_wait(d, extra_args, plan):
     child_env["ORCH_FAKE_LOG"] = str(log)
     child_env["ORCH_FAKE_PLAN"] = json.dumps([{"stdout": p} for p in plan],
                                              ensure_ascii=False)
+    child_env["ORCH_FAKE_PYTHON"] = sys.executable
     return log, subprocess.run(
         [sys.executable, "-X", "utf8", "-B",
          str(Path(__file__).parent / "orch_wait.py"),
@@ -394,6 +403,92 @@ class Health(unittest.TestCase):
         with patch.object(orch_wait.subprocess, "run", side_effect=subprocess.TimeoutExpired("orca", 30)):
             result = orch_wait.orca_check("orca", "r", 1000, "", None)
         self.assertEqual(result["error"]["code"], "cli_timeout")
+
+
+class GuardHealth(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "guard"
+        self.dir.mkdir()
+        self.now = 1000.0
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write_control(self, **fields):
+        payload = {"desired": "running", "heartbeat_ts": orch_wait.datetime.now().astimezone()
+                   .isoformat(timespec="seconds"), "pid": 42}
+        payload.update(fields)
+        (self.dir / "guard.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    def write_hold(self, hold_id, state="open", tool="Bash", rule="gh.auth"):
+        (self.dir / "holds").mkdir(exist_ok=True)
+        (self.dir / "holds" / f"{hold_id}.json").write_text(json.dumps({
+            "id": hold_id, "state": state, "label": "coordinator", "tool": tool,
+            "rule": rule, "reason": "测试", "terminal": "term_1"}), encoding="utf-8")
+
+    def probe(self):
+        health = orch_wait.GuardHealth(self.dir, clock=lambda: self.now)
+        return health.probe()
+
+    def test_missing_dir_is_silent(self):
+        self.assertIsNone(orch_wait.GuardHealth(self.dir / "absent", clock=lambda: self.now).probe())
+
+    def test_fresh_guard_without_holds_is_silent(self):
+        self.write_control()
+        self.assertIsNone(self.probe())
+
+    def test_stale_heartbeat_alerts_unavailable(self):
+        self.write_control(heartbeat_ts="2020-01-01T00:00:00+08:00")
+        alert = self.probe()
+        self.assertEqual(alert["alerts"][0]["reason"], "guard_unavailable")
+
+    def test_missing_control_alerts_unavailable(self):
+        alert = self.probe()
+        self.assertEqual(alert["alerts"][0]["reason"], "guard_unavailable")
+
+    def test_stopped_guard_does_not_alert(self):
+        self.write_control(desired="stopped", heartbeat_ts="2020-01-01T00:00:00+08:00")
+        self.assertIsNone(self.probe())
+
+    def test_open_hold_alerts_guard_hold(self):
+        self.write_control()
+        self.write_hold("h1")
+        alert = self.probe()
+        self.assertEqual(alert["alerts"][0]["reason"], "guard_hold")
+        self.assertEqual(alert["alerts"][0]["evidence"]["holds"][0]["id"], "h1")
+
+    def test_resolved_hold_is_silent(self):
+        self.write_control()
+        self.write_hold("h1", state="resolved-by-agent")
+        self.assertIsNone(self.probe())
+
+    def test_denied_and_apply_failed_still_need_a_human(self):
+        self.write_control()
+        self.write_hold("h1", state="denied-by-agent")
+        self.write_hold("h2", state="apply-failed")
+        holds = self.probe()["alerts"][0]["evidence"]["holds"]
+        self.assertEqual([row["id"] for row in holds], ["h1", "h2"])
+
+    def test_chain_reports_both_members(self):
+        self.write_control()
+        self.write_hold("h1")
+        worker = orch_wait.WorkerHealth("orca", "run_1", clock=lambda: self.now,
+                                        request=lambda cmd, timeout: env({"workers": []}))
+        chain = orch_wait.HealthChain([worker, orch_wait.GuardHealth(self.dir, clock=lambda: self.now)])
+        alerts = chain.probe()["alerts"]
+        self.assertIn("no_active_workers", [row["reason"] for row in alerts])
+        self.assertIn("guard_hold", [row["reason"] for row in alerts])
+
+    def test_interval_gates_repeated_probes(self):
+        self.write_control()
+        self.write_hold("h1")
+        guard_health = orch_wait.GuardHealth(self.dir, interval=60, clock=lambda: self.now)
+        self.assertTrue(guard_health.due())
+        guard_health.probe()
+        self.assertFalse(guard_health.due())
+        self.now += 61
+        self.assertTrue(guard_health.due())
 
 
 if __name__ == "__main__":

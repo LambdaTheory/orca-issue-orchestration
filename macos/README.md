@@ -1,4 +1,4 @@
-# Orca Issue Orchestration · macos · v1.0.3
+# Orca Issue Orchestration · macos · v1.1.0
 
 本平台包含完整 11 个 skills，使用 bash / zsh 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
 
@@ -11,6 +11,13 @@
 `ORCA_ISSUE_SKILL_DIR` 可覆盖主 skill 的安装目录；`ORCA_ISSUE_PYTHON` 可指定 Python 3 解释器。路径必须按当前执行宿主填写，安装目录与开发项目目录不是同一个概念。
 
 按需读取参考文档，不把所有历史记录加载到协调者上下文。只按已有授权交付；首次安装不会自动创建 Run、Issue、订阅或开发任务。
+
+## v1.1.0 升级说明
+
+- 新增守护终端：编排开始后在独立终端常驻，遇到权限确认弹窗时按白名单放行并复核；越界、凭据、强推、越界删除一律挂起等人。所有判定写入 `audit.jsonl`，可 `pause` 急停。守护只处理确认弹窗和停摆提示，不重派任务、不代替需求决定。
+- GitHub 监听改为任务级系统托管，`webhook_watch` 保留为历史回退；新增任务标签范围保护。
+- 新增时长统计（`C` / `S timing` / `S finish` / `PT`）与每小时进展回报（`RP`）。
+- 旧会话不会热加载新脚本；先让原协调者收口，再更新 skill 目录。已在运行的 Run 状态文件向前兼容。
 
 ## v1.0.3 升级说明
 

@@ -38,6 +38,9 @@
       换服务端须新状态目录，不得拿旧 consumer 继续使用。
     - 仅 loopback 允许 http，其余必须 https；证书默认校验；拒绝跟随
       HTTP 重定向（避免把令牌发往其他主机）；任何输出不含令牌。
+    - 供 task_watch.py 复用的实现层：init_impl / ack_impl / poll_once /
+      persist_pending，及通用 JSON 读写（_load_json/_save_json）与文件锁
+      （_lock_file，按文件名派生，可叠加不同的锁文件）。CLI 行为不变。
 """
 from __future__ import annotations
 
@@ -76,35 +79,50 @@ class WatcherError(Exception):
         self.exit_code = exit_code
 
 
+class LockBusy(WatcherError):
+    """The lock is held by another process, not a filesystem failure."""
+
+
 # ---------------------------------------------------------------- 状态文件
 
-def _load_state(state_dir: str) -> dict:
-    path = os.path.join(state_dir, STATE_FILE)
+def _load_json(state_dir: str, filename: str) -> dict:
+    path = os.path.join(state_dir, filename)
     if not os.path.exists(path):
         return {}
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            value = json.load(f)
+            if not isinstance(value, dict):
+                raise ValueError("状态必须是 JSON 对象")
+            return value
     except ValueError as exc:
         raise WatcherError("%s 损坏无法解析（%s），请人工修复后重试"
                            % (path, exc))
 
 
-def _save_state(state_dir: str, state: dict) -> None:
+def _save_json(state_dir: str, filename: str, data: dict) -> None:
     """原子写入：先写临时文件再 os.replace，失败时旧状态保持完整。"""
-    final = os.path.join(state_dir, STATE_FILE)
+    final = os.path.join(state_dir, filename)
     tmp = final + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2, sort_keys=True)
+        json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, final)
 
 
+def _load_state(state_dir: str) -> dict:
+    return _load_json(state_dir, STATE_FILE)
+
+
+def _save_state(state_dir: str, state: dict) -> None:
+    _save_json(state_dir, STATE_FILE, state)
+
+
 @contextmanager
-def _state_lock(state_dir: str):
-    """OS 级排他锁，防止同一状态目录被两个 watcher 同时使用。"""
-    path = os.path.join(state_dir, LOCK_FILE)
+def _lock_file(state_dir: str, filename: str):
+    """Nonblocking OS lock; callers that wait must supply their own bounded retry."""
+    path = os.path.join(state_dir, filename)
     fd = os.open(path, os.O_CREAT | os.O_RDWR)
     locked = False
     try:
@@ -113,17 +131,21 @@ def _state_lock(state_dir: str):
             try:
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
                 locked = True
-            except OSError:
-                raise WatcherError(
-                    "另一个 watcher 正在使用该状态目录（%s 被占用）" % LOCK_FILE)
+            except OSError as exc:
+                if exc.errno not in (11, 13, 35, 36):
+                    raise
+                raise LockBusy(
+                    "另一个 watcher 正在使用该状态目录（%s 被占用）" % filename) from exc
         else:
             import fcntl
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 locked = True
-            except OSError:
-                raise WatcherError(
-                    "另一个 watcher 正在使用该状态目录（%s 被占用）" % LOCK_FILE)
+            except OSError as exc:
+                if exc.errno not in (11, 13, 35, 36):
+                    raise
+                raise LockBusy(
+                    "另一个 watcher 正在使用该状态目录（%s 被占用）" % filename) from exc
         yield
     finally:
         if locked and os.name == "nt":
@@ -133,6 +155,13 @@ def _state_lock(state_dir: str):
             except OSError:
                 pass
         os.close(fd)
+
+
+@contextmanager
+def _state_lock(state_dir: str):
+    """OS 级排他锁，防止同一状态目录被两个 watcher 同时使用。"""
+    with _lock_file(state_dir, LOCK_FILE):
+        yield
 
 
 # ---------------------------------------------------------------- HTTP
@@ -271,14 +300,17 @@ def _print_init_hint(state: dict) -> None:
 
 # ---------------------------------------------------------------- 子命令
 
-def cmd_init(args, state_dir: str) -> None:
-    token = _token()
-    base = _check_base(os.environ.get("WATCH_URL", ""))
+def init_impl(state_dir: str, base: str, token: str, repository_id: str,
+              subscription_key: str, start: str) -> dict:
+    """init 的可复用实现（CLI 与 task_watch 复用，行为不变）。
+
+    base/token 由调用方提供；task_watch 从绑定与凭据文件取得。
+    """
     with _state_lock(state_dir):
         state = _load_state(state_dir)
-        want = {"subscription_key": args.subscription_key,
-                "repository_id": args.repository_id,  # 十进制字符串
-                "start": args.start,
+        want = {"subscription_key": subscription_key,
+                "repository_id": repository_id,  # 十进制字符串
+                "start": start,
                 "watch_url": base}
         if state.get("subscription_key") is not None \
                 or state.get("watch_url") is not None:
@@ -292,15 +324,15 @@ def cmd_init(args, state_dir: str) -> None:
         if state.get("consumer_id"):
             print("已初始化，跳过重复创建: consumer_id=%s" % state["consumer_id"])
             _print_init_hint(state)
-            return
+            return state
         # 先持久化稳定参数再 POST，失败重试不会重复登记参数
         state = {**want, "consumer_id": None}
         _save_state(state_dir, state)
         response = _api_request(
             "POST", base + "/v1/consumers", token,
-            {"subscription_key": args.subscription_key,
-             "repository_id": args.repository_id,
-             "start": args.start})
+            {"subscription_key": subscription_key,
+             "repository_id": repository_id,
+             "start": start})
         for key in ("consumer_id", "initial_boundary_seq", "cursor_seq"):
             if key not in response:
                 raise WatcherError("服务响应缺少字段 %s: %r" % (key, response))
@@ -311,6 +343,45 @@ def cmd_init(args, state_dir: str) -> None:
               % (state["consumer_id"], state["repository_id"],
                  state["subscription_key"], state["start"]))
         _print_init_hint(state)
+        return state
+
+
+def cmd_init(args, state_dir: str) -> None:
+    token = _token()  # 先校验（与重构前一致），再校验 URL
+    base = _check_base(os.environ.get("WATCH_URL", ""))
+    init_impl(state_dir, base, token, args.repository_id,
+              args.subscription_key, args.start)
+
+
+def poll_once(base: str, consumer_id: str, token: str,
+              wait_seconds: int = POLL_WAIT_SECONDS,
+              timeout: int | None = None) -> dict:
+    """一次长轮询（不持锁、不落盘）；供 CLI wait 与 serve 复用。"""
+    url = _consumer_url(base, consumer_id, "/events")
+    to = wait_seconds + REQUEST_TIMEOUT // 2 if timeout is None else timeout
+    return _api_request(
+        "GET", "%s?wait_seconds=%d" % (url, wait_seconds), token, timeout=to)
+
+
+def persist_pending(state_dir: str, state: dict, response: dict) -> bool:
+    """把服务返回批次原子落盘 pending（调用方须持 webhook 锁）。
+
+    空批次返回 False；返回 True 表示已落盘一个待确认批次。
+    """
+    batch_id = response.get("batch_id")
+    events = response.get("events") or []
+    if batch_id is None:
+        if not events:
+            return False
+        raise WatcherError("服务返回事件但缺少 batch_id，无法归属，已终止")
+    # 先原子落盘 pending，再由调用方打印（崩溃后可用 wait 重放）
+    state["pending"] = {
+        "batch_id": batch_id,
+        "events": events,
+        "through_seq": response.get("through_seq"),
+    }
+    _save_state(state_dir, state)
+    return True
 
 
 def cmd_wait(args, state_dir: str) -> None:
@@ -323,56 +394,49 @@ def cmd_wait(args, state_dir: str) -> None:
         _check_server_binding(state, base)
         pending = state.get("pending")
         if pending and pending.get("batch_id"):
-            _print_batch(pending.get("events") or [], pending["batch_id"], replay=True)
+            _print_batch(pending.get("events") or [], pending["batch_id"],
+                         replay=True)
             return
         token = _token()
-        url = _consumer_url(base, consumer_id, "/events")
         while True:
-            wait_seconds = POLL_WAIT_SECONDS
-            response = _api_request(
-                "GET", "%s?wait_seconds=%d" % (url, wait_seconds), token,
-                timeout=wait_seconds + REQUEST_TIMEOUT // 2)
+            response = poll_once(base, consumer_id, token)
             batch_id = response.get("batch_id")
             events = response.get("events") or []
             if batch_id is None and not events:
                 continue  # 空批次：内部继续长轮询
-            if batch_id is None:
-                raise WatcherError("服务返回事件但缺少 batch_id，无法归属，已终止")
-            # 先原子落盘 pending，再打印（崩溃后可用 wait 重放）
-            state["pending"] = {
-                "batch_id": batch_id,
-                "events": events,
-                "through_seq": response.get("through_seq"),
-            }
-            _save_state(state_dir, state)
+            persist_pending(state_dir, state, response)
             _print_batch(events, batch_id, replay=False)
             return
 
 
-def cmd_ack(args, state_dir: str) -> None:
+def ack_impl(state_dir: str, batch_id: str, base: str, token: str) -> None:
+    """ack 的可复用实现（持原 webhook 锁代理确认；CLI 与 task_watch 复用）。"""
     with _state_lock(state_dir):
         state = _load_state(state_dir)
         pending = state.get("pending")
         if not pending or not pending.get("batch_id"):
             raise WatcherError("本地没有待确认批次（可运行 wait 获取）")
-        if args.batch_id != pending["batch_id"]:
+        if batch_id != pending["batch_id"]:
             raise WatcherError(
                 "--batch-id 与本地 pending 不匹配（本地: %s）" % pending["batch_id"])
         consumer_id = state.get("consumer_id")
         if not consumer_id:
             raise WatcherError("状态文件缺少 consumer_id")
-        base = _check_base(os.environ.get("WATCH_URL", ""))
         _check_server_binding(state, base)
-        token = _token()
         response = _api_request(
             "POST", _consumer_url(base, consumer_id, "/ack"), token,
-            {"batch_id": args.batch_id})
+            {"batch_id": batch_id})
         if not response.get("ok"):
             # 服务未确认成功：保留 pending，可重试
             raise WatcherError("ack 未被服务确认: %r" % response, EXIT_NETWORK)
         state["pending"] = None  # 服务确认成功后才清除 pending
         _save_state(state_dir, state)
-        print("已确认批次 %s" % args.batch_id)
+        print("已确认批次 %s" % batch_id)
+
+
+def cmd_ack(args, state_dir: str) -> None:
+    base = _check_base(os.environ.get("WATCH_URL", ""))
+    ack_impl(state_dir, args.batch_id, base, _token())
 
 
 # ---------------------------------------------------------------- CLI
