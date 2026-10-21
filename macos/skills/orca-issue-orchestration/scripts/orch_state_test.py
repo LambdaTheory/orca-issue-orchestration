@@ -217,5 +217,49 @@ class OrchStateTest(unittest.TestCase):
         self.assertIn("已运行", shown.stdout)
 
 
+class MissingRunTest(unittest.TestCase):
+    """A typo in the run id must not print a traceback; it must say how to start."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="orch 中文 path ")
+        self.repo = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def run_cli(self, *args):
+        return subprocess.run(
+            [sys.executable, str(CLI), "--repo", str(self.repo), "--run", "r1", *args],
+            capture_output=True, text=True, encoding="utf-8")
+
+    def assertCleanFailure(self, args):
+        result = self.run_cli(*args)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Traceback", result.stderr + result.stdout)
+        combined = result.stderr + result.stdout
+        self.assertIn("还没初始化", combined)
+        self.assertIn("init", combined)
+        return result
+
+    def test_show_on_missing_run(self):
+        self.assertCleanFailure(["show"])
+
+    def test_set_on_missing_run(self):
+        self.assertCleanFailure(["set", "1", "stage=ready"])
+
+    def test_ask_on_missing_run(self):
+        self.assertCleanFailure(["ask", "口径?"])
+
+    def test_timing_on_missing_run(self):
+        self.assertCleanFailure(["timing"])
+
+    def test_corrupt_state_says_so(self):
+        target = self.repo / ".orchestration" / "r1"
+        target.mkdir(parents=True)
+        (target / "state.json").write_text("{not json", encoding="utf-8")
+        result = self.run_cli("show")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("无法解析", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

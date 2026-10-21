@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Task-label scoped watcher: on-demand system service plus a local notification bridge."""
+"""Task-label scoped watcher: on-demand system service plus a local notification bridge.
+
+凭据: 使用 webhook_watch 的个人凭据 JSON（login --trust-server 申领）。
+start 时凭据文件路径固化进绑定（默认为按服务 URL 哈希的用户级配置路径，
+可 --credentials-file 覆盖），owner_github_user_id 一并落盘；绑定/状态不存
+任何令牌。后台 serve 只读已保存凭据：不调用 gh、不重新签发、不读
+MESSAGE_TOKEN；401/403 认证失败持久化 auth blocked，不再退避重试，由用户
+在前台 login 后 start 恢复。旧 --token-file（原始共享令牌）接口已停用。
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +17,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import time
@@ -31,7 +38,8 @@ RUNTIME_FRESH_SECONDS = 180
 SCOPE_REFRESH_SECONDS = 300
 SERVE_INTERVAL = 2
 BRIDGE_INTERVAL = 2
-REQUIRED_ARGS = ("repo", "repository_id", "task_label", "subscription_key", "watch_url", "token_file")
+REQUIRED_ARGS = ("repo", "repository_id", "task_label", "subscription_key", "watch_url")
+STABLE_BINDING_KEYS = REQUIRED_ARGS + ("gh_path", "credentials_file", "start")
 _SECRETS = set()
 
 
@@ -68,17 +76,48 @@ def _lock(directory, name):
         yield
 
 
-def _read_token(path):
-    info = os.stat(path)
-    if not stat.S_ISREG(info.st_mode):
-        raise TaskWatchError("凭据路径必须是普通文件")
-    if os.name != "nt" and (info.st_mode & 0o077 or info.st_uid != os.getuid()):
-        raise TaskWatchError("凭据文件必须属于当前用户且仅本人可读写（如 chmod 600）")
-    token = Path(path).read_text(encoding="utf-8").strip()
-    if not token or "\n" in token or "\r" in token:
-        raise TaskWatchError("凭据文件必须包含非空单行令牌")
+def _owner_id(owner):
+    return (owner or {}).get("github_user_id")
+
+
+def _saved_credentials(binding):
+    """后台/离线只读已保存个人凭据：绝不 gh、绝不签发、绝不读 MESSAGE_TOKEN。
+
+    凭据 owner 与绑定 owner 不一致时拒绝（用前台 login/start 恢复）。
+    """
+    token, owner = ww.resolve_saved_credentials(
+        binding["watch_url"], "采集", binding["credentials_file"])
+    cred_id = _owner_id(owner)
+    if not ww._valid_owner_id(cred_id):
+        raise TaskWatchError("已保存凭据缺少合法 owner，请前台重新 login")
+    bound_id = binding.get("owner_github_user_id")
+    if bound_id and str(bound_id) != str(cred_id):
+        raise TaskWatchError(
+            "已保存凭据 owner(%s)与绑定 owner(%s)不一致，拒绝采集；请核对 "
+            "login 使用的账号后重新 start" % (cred_id, bound_id))
     _SECRETS.add(token)
-    return token
+    return token, owner
+
+
+def _check_current_credentials(binding):
+    """无锁校验当前已保存凭据与绑定 owner 仍一致（只读）。
+
+    凭据缺失同样直接认证错误：不等待后台稍后发现，绝不以假成功早退。
+    """
+    creds = ww.read_credentials_file(binding["credentials_file"],
+                                     binding["watch_url"])
+    if creds is None:
+        raise TaskWatchError(
+            "本地没有已保存的个人凭据（%s）：不能当作已运行；请前台运行 "
+            "login --trust-server %s 恢复，或核对绑定的凭据路径"
+            % (binding["credentials_file"], binding["watch_url"]))
+    cred_id = _owner_id(creds.get("owner"))
+    bound = binding.get("owner_github_user_id")
+    if bound and str(cred_id) != str(bound):
+        raise TaskWatchError(
+            "当前已保存凭据 owner(%s)与绑定 owner(%s)不一致（个人凭据已被"
+            "替换），不当作仍在监听；请按状态目录核对后 start 恢复"
+            % (cred_id, bound))
 
 
 def _run_gh(binding, endpoint, paginate=False):
@@ -151,6 +190,17 @@ def _record_scope_locked(directory, control, entries):
 
 def _resolve_binding(args, control):
     old = control.get("binding", {})
+    if old.get("token_file"):
+        raise TaskWatchError(
+            "检测到旧 --token-file 绑定：本版本已改用个人凭据 JSON"
+            "（webhook_watch login --trust-server <服务地址> 申领），"
+            "旧绑定不可复用；请用新状态目录重新 start。未确认批次与对账"
+            "记录已保留，不会丢失")
+    if getattr(args, "token_file", None):
+        raise TaskWatchError(
+            "--token-file（原始 MESSAGE_TOKEN 文件）是旧接口，已停用且不再读取；"
+            "请先运行 webhook_watch login --trust-server <服务地址> 申领个人"
+            "凭据，再用默认凭据路径或 --credentials-file 指定其 JSON 文件")
     binding = {}
     for key in REQUIRED_ARGS:
         value = getattr(args, key, None)
@@ -167,7 +217,12 @@ def _resolve_binding(args, control):
     if binding["task_label"] in ("enhancement", "bug", "needs-user", "gate"):
         raise TaskWatchError("不能用状态/类型标签作为任务标签")
     binding["watch_url"] = ww._check_base(binding["watch_url"])
-    binding["token_file"] = str(Path(binding["token_file"]).expanduser().resolve())
+    # 凭据文件：显式 --credentials-file 覆盖；缺省用按规范 URL 哈希的个人
+    # 凭据默认路径（在前台固化进绑定，供后台 serve 只读复用）
+    cred_file = getattr(args, "credentials_file", None) or old.get("credentials_file")
+    binding["credentials_file"] = str(Path(
+        cred_file or ww.default_credentials_file(binding["watch_url"])
+    ).expanduser().resolve())
     gh = getattr(args, "gh_path", None) or old.get("gh_path") or shutil.which("gh")
     if not gh:
         raise TaskWatchError("未找到 gh，请配置 --gh-path")
@@ -175,8 +230,9 @@ def _resolve_binding(args, control):
     if not os.path.isfile(binding["gh_path"]):
         raise TaskWatchError("gh 可执行文件不存在")
     binding["start"] = getattr(args, "start", None) or old.get("start", "now")
-    if old and old != binding:
-        raise TaskWatchError("状态目录已绑定其他参数，不能换仓库、任务、服务或凭据路径")
+    for key in STABLE_BINDING_KEYS:
+        if old.get(key) is not None and old.get(key) != binding[key]:
+            raise TaskWatchError("状态目录已绑定其他参数，不能换仓库、任务、服务、gh 或凭据路径（%s）" % key)
     return binding
 
 
@@ -190,6 +246,13 @@ def _wait_ready(directory, service, binding, generation):
     while time.monotonic() < deadline:
         state = service.status(binding)
         runtime = _load_runtime(directory)
+        # 认证阻断是最明确失败信号：仅当前代次生效（上一代 401 残留
+        # 不能把新的恢复 start 立即判失败），绝不等到 ready 才被抹掉
+        if (runtime.get("generation") == generation
+                and runtime.get("auth_blocked")):
+            raise TaskWatchError(
+                runtime.get("blocked_note") or
+                "服务端认证失败(401/403)；请前台 login --trust-server 后重试 start")
         if (state.get("running") and _runtime_fresh(runtime, generation) and
                 runtime.get("desired_seen") == "running" and not runtime.get("quiesced")):
             return
@@ -201,7 +264,11 @@ def cmd_start(args, directory):
     with _lock(directory, OPERATION_LOCK):
         control = _load_control(directory)
         binding = _resolve_binding(args, control)
-        token = _read_token(binding["token_file"])
+        # 共享令牌已停用：检测到 MESSAGE_TOKEN 即给升级提示（不静默采用）
+        ww.reject_shared_token_env()
+        # 旧 consumer 缺 schema/owner：拒绝复用（pending 保留不丢）
+        old_state = ww._load_state(directory)
+        ww._reject_legacy_state(old_state)
         service = TaskService(directory)
         managed = control.get("service_binding")
         if not managed:
@@ -209,12 +276,14 @@ def cmd_start(args, directory):
         if (managed.get("available") is False or managed.get("user_manager_available") is False or
                 managed.get("interactive_available") is False):
             raise TaskWatchError("系统托管不可用: " + managed.get("detail", "请检查用户登录环境"))
-        # 已运行时不与长轮询争 init 锁，也不重置代次或对账状态。
+        # 已运行时不与长轮询争 init 锁，也不重置代次或对账状态——但心跳
+        # 可能已缓存旧结果：先只读校验当前凭据 owner 与绑定仍一致。
         if control.get("desired") == "running" and control.get("phase") == "ready":
             state = service.status(managed)
             runtime = _load_runtime(directory)
             if (state.get("running") and _runtime_fresh(runtime, control.get("generation")) and
                     not runtime.get("blocked_note")):
+                _check_current_credentials(control.get("binding") or binding)
                 print(json.dumps(collect_status(directory), ensure_ascii=False))
                 return
         if query_repo_id(binding) != binding["repository_id"]:
@@ -222,6 +291,26 @@ def cmd_start(args, directory):
         entries = query_scope(binding)
         if not entries:
             raise TaskWatchError("任务标签下没有真实 Issue，请先完成建票并打标")
+        # 凭据在前台解析/申领（缺省路径在此固化进绑定，供后台只读复用）：
+        # 失败立刻报错，不落任何绑定/业务状态，也不当作已监听。
+        token, owner = ww.claim_credentials(
+            binding["watch_url"], trust_server=getattr(args, "trust_server", None),
+            credentials_file=binding["credentials_file"])
+        cred_id = _owner_id(owner)
+        if not ww._valid_owner_id(cred_id):
+            raise TaskWatchError(
+                "个人凭据缺少合法 owner，请重新 login --trust-server <服务地址>")
+        old_owner = control.get("binding", {}).get("owner_github_user_id")
+        if old_owner and str(old_owner) != cred_id:
+            raise TaskWatchError(
+                "本次个人凭据 owner(%s)与原绑定 owner(%s)不一致；请用新状态目录"
+                "重新 start（未确认批次已保留）" % (cred_id, old_owner))
+        binding["owner_github_user_id"] = str(cred_id)
+        # 写 control 之前先对既有 webhook 状态做稳定参数/owner 检查——
+        # 无论 consumer 是否存在：CLI 先 init 失败留下的未完成订阅（已登记
+        # 参数或 owner A）不得被另一凭据/参数的 start 锁死目录。
+        pre_state = ww._load_state(directory)
+        _reject_init_conflict(pre_state, binding, cred_id)
         with _lock(directory, CONTROL_LOCK):
             control = _load_control(directory)
             control.update(binding=binding, service_binding=managed, desired="running", phase="starting",
@@ -232,11 +321,17 @@ def cmd_start(args, directory):
         state = ww._load_state(directory)
         if not state.get("consumer_id"):
             ww.init_impl(directory, binding["watch_url"], token, binding["repository_id"],
-                         binding["subscription_key"], binding["start"])
+                         binding["subscription_key"], binding["start"],
+                         credential_owner=owner)
         else:
             for key in ("watch_url", "repository_id", "subscription_key", "start"):
                 if state.get(key) != binding[key]:
                     raise TaskWatchError("已有 webhook 订阅绑定不匹配: " + key)
+            if str(state.get("owner_github_user_id")) != cred_id:
+                raise TaskWatchError(
+                    "已初始化状态 owner(%s)与本次凭据 owner(%s)不一致，拒绝复用；"
+                    "请用新状态目录重新 start（未确认批次已保留）"
+                    % (state.get("owner_github_user_id"), cred_id))
         # 固定订阅边界之后再查询一次；协调者还须读取正文/评论补齐历史。
         entries = query_scope(binding)
         if not entries:
@@ -251,6 +346,19 @@ def cmd_start(args, directory):
             control["phase"] = "ready"
             _save_control(directory, control)
         print(json.dumps(collect_status(directory), ensure_ascii=False))
+
+
+def _reject_init_conflict(state, binding, cred_id):
+    """start 写 control 之前对既有 webhook 状态的稳定参数/owner 预检
+    （不修改任何 control/reconcile/pending，先拒绝再动绑定）。"""
+    ww._check_init_want(state, binding["watch_url"], binding["repository_id"],
+                        binding["subscription_key"], binding["start"])
+    prev_owner = state.get("owner_github_user_id")
+    if ww._valid_owner_id(prev_owner) and str(prev_owner) != str(cred_id):
+        raise TaskWatchError(
+            "该状态目录已有 webhook 订阅登记 owner(%s)，与本次凭据 owner(%s)"
+            "不一致，拒绝 start；请用新状态目录（未确认批次已保留，不会丢失）"
+            % (prev_owner, cred_id))
 
 
 def collect_status(directory):
@@ -273,6 +381,7 @@ def collect_status(directory):
               "reconcile_required": required, "known_issues": control.get("known_issues", []),
               "open_scope_ops": sorted(control.get("scope_ops", {})),
               "pending": pending, "last_error": runtime.get("last_error"),
+              "auth_blocked": bool(runtime.get("auth_blocked")),
               "heartbeat_ts": runtime.get("heartbeat_ts"), "detail": "未绑定任务"}
     if not control.get("binding"):
         return result
@@ -286,12 +395,13 @@ def collect_status(directory):
         result.update(state="blocked", detail=service_error)
     elif not service.get("running") or not _runtime_fresh(runtime, control.get("generation")):
         result.update(state="recovering", detail="采集进程未确认存活，优先 start 恢复")
-    elif required:
-        result.update(state="blocked", detail="须对账当前票据/评论并 reconcile --version %s" % scope.get("version"))
-    elif runtime.get("blocked_note"):
-        result.update(state="blocked", detail=runtime["blocked_note"])
     elif pending:
         result.update(state="processing", detail="未确认批次等待业务处理")
+    elif runtime.get("blocked_note"):
+        # 认证 blocked 等明确失败须优先呈现，不被 reconcile 遮蔽
+        result.update(state="blocked", detail=runtime["blocked_note"])
+    elif required:
+        result.update(state="blocked", detail="须对账当前票据/评论并 reconcile --version %s" % scope.get("version"))
     else:
         result.update(state="running", detail="采集存活；通知桥需由宿主挂载")
     return result
@@ -313,12 +423,13 @@ def bridge_once(directory, after):
     pending = ww._load_state(directory).get("pending")
     if pending:
         return {"kind": "batch", "pending": pending}
+    error = runtime.get("last_error", {})
+    # 新错误（含认证 blocked）优先于 reconcile 提示，避免 scope 变化把 401 遮住
+    if error.get("version", 0) > after:
+        return {"kind": "error", **error}
     scope = control.get("scope_check", {})
     if control.get("reconcile", {}).get("version") != scope.get("version"):
         return {"kind": "reconcile", "scope_version": scope.get("version"), "issues": scope.get("issues", [])}
-    error = runtime.get("last_error", {})
-    if error.get("version", 0) > after:
-        return {"kind": "error", **error}
     if control.get("desired") == "running" and not _runtime_fresh(runtime, control.get("generation")):
         # 一个运行代次只报告一次失联，--after 不屏蔽未来的新业务批次。
         version = max(runtime.get("notice_version", 0) + 1, control.get("generation", 0) * 1000000)
@@ -344,7 +455,9 @@ def cmd_ack(args, directory):
         binding = control.get("binding")
         if not binding:
             raise TaskWatchError("未绑定任务")
-        ww.ack_impl(directory, args.batch_id, binding["watch_url"], _read_token(binding["token_file"]))
+        token, owner = _saved_credentials(binding)
+        ww.ack_impl(directory, args.batch_id, binding["watch_url"], token,
+                    credential_owner=owner)
 
 
 def cmd_reconcile(args, directory):
@@ -447,8 +560,9 @@ def cmd_stop(args, directory):
                 state = ww._load_state(directory)
                 if not state.get("consumer_id"):
                     raise TaskWatchError("订阅初始化未完成，不能判定队列已清空")
+                token, owner = _saved_credentials(binding)
                 response = ww.poll_once(binding["watch_url"], state["consumer_id"],
-                                        _read_token(binding["token_file"]), wait_seconds=0)
+                                        token, wait_seconds=0, state=state)
                 if ww.persist_pending(directory, state, response):
                     raise TaskWatchError("远端还有积压批次，已保存 pending，请先处理")
                 with _lock(directory, CONTROL_LOCK):
@@ -524,6 +638,10 @@ def serve_step(directory):
         _save_runtime(directory, runtime)
         return "quiesced"
     _save_runtime(directory, runtime)
+    # 认证阻断是持久状态：每轮直接呈现 blocked（跨时钟跳跃/进程重启不自动
+    # 恢复，不靠超长定时器模拟）；新代次（start 成功 bump generation）丢弃
+    if runtime.get("auth_blocked"):
+        return "blocked"
     if time.time() < runtime.get("retry_at", 0):
         return "backoff"
     try:
@@ -557,15 +675,35 @@ def serve_step(directory):
                 return "backpressure"
             if not state.get("consumer_id"):
                 raise TaskWatchError("订阅未初始化，请 start 恢复")
+            ww._reject_legacy_state(state)
             ww._check_server_binding(state, binding["watch_url"])
-            response = ww.poll_once(binding["watch_url"], state["consumer_id"], _read_token(binding["token_file"]))
+            # 后台只读已保存凭据：不 gh 重签、不用 env 兜底；缺凭据即报错
+            # 并持久化 blocked（绝不降级为已监听）
+            token, owner = _saved_credentials(binding)
+            response = ww.poll_once(binding["watch_url"], state["consumer_id"],
+                                    token, state=state)
             got = ww.persist_pending(directory, state, response)
         runtime.pop("blocked_note", None)
         runtime.pop("last_error", None)
+        runtime.pop("auth_blocked", None)
         runtime.update(retry_at=0, failures=0, last_poll_ts=time.time(), heartbeat_ts=time.time())
         _save_runtime(directory, runtime)
         return "consumed" if got else "idle"
     except (TaskWatchError, ww.WatcherError, OSError) as exc:
+        if isinstance(exc, ww.WatcherError) and getattr(exc, "http_auth", False):
+            # 服务端 401/403：持久化 auth blocked（不退避重试、不后台重签
+            # 发）；恢复只由前台 login --trust-server 后 start（新代次丢弃
+            # 旧 runtime）触发
+            note = ("认证失败(401/403)：后台已停止重试，也不会重新签发凭据；"
+                    "请在前台运行 login --trust-server %s --credentials-file "
+                    "<绑定路径> 申领个人 Token 后 task_watch start 恢复"
+                    % control.get("binding", {}).get("watch_url", "<服务地址>"))
+            _record_error(runtime, note)
+            runtime.update(failures=runtime.get("failures", 0) + 1,
+                           auth_blocked=True, retry_at=0,
+                           heartbeat_ts=time.time())
+            _save_runtime(directory, runtime)
+            return "blocked"
         _record_error(runtime, exc)
         failures = runtime.get("failures", 0) + 1
         runtime.update(failures=failures, retry_at=time.time() + min(300, 10 * 2 ** min(failures - 1, 5)),
@@ -599,6 +737,11 @@ def _build_parser():
                 if key == "task_label":
                     flags.append("--label")
                 p.add_argument(*flags, dest=key)
+            p.add_argument("--credentials-file",
+                           help="个人凭据 JSON 覆盖路径（缺省为按服务 URL 哈希的用户级配置路径）")
+            p.add_argument("--trust-server",
+                           help="首次签发个人凭据的显式确认（规范化后须与服务地址完全一致）")
+            p.add_argument("--token-file", help=argparse.SUPPRESS)  # 旧接口：给出迁移指引后报错
             p.add_argument("--gh-path")
             p.add_argument("--start", choices=("now", "earliest_retained"))
         elif name == "status":

@@ -1,3 +1,5 @@
+
+
 # 命令参考
 
 先解析本次实际位置，再使用下面的状态、等待和派发命令。`/code-review` 等是 Agent 命令，不是 Shell 命令。
@@ -25,7 +27,6 @@ PT(){ "$PY" -X utf8 "$SKILL_DIR/scripts/orch_pr_timing.py" --repo "$REPO" --run 
 
 先查持久化记录和 Orca 是否已有本任务 Run/Dispatch；恢复现有尝试，不重复建 Run。初始化通过、票据存在、派发已授权后，由协调者立即执行下列 Orca 命令启动可执行票。不能只输出待办清单、开普通子代理或说“下一步可派发”就结束。
 
-
 ```text
 orca orchestration run-create --objective "<项目> 实现" --json            # 得到 run_id
 RUN_ID="<上一步真实返回的 Run ID>" # S 已在位置变量中定义
@@ -40,6 +41,41 @@ S rule "<用户已定的、所有协调者必须遵守的约定>"
 
 系统托管的采集进程持续运行，`TW wait` 只是宿主管理的一次性本地通知桥。桥输出退出以触发后台完成通知，采集器不退出；pending 未确认时保持背压，不提前 ACK 或重复拉取下一批。`orch_wait.py` 另管 worker 消息，两者不能替代。
 
+### 首次准备个人凭据
+
+首次 `TW start` 可用 `gh auth token` 获取当前 GitHub 登录凭据，并将其发送到用户明确选择信任的 HTTPS 服务领取个人 message token。HTTPS 本身不构成授权：发送前必须由用户确切确认服务 URL。`--watch-url` 与 `--trust-server` 必须使用同一个已确认的服务 URL；不得仅因 URL 来自环境变量或默认值就视为已获信任。凭据只在前台启动时申领；服务返回 401/403 时停止并提示用户先完成前台登录，再重试 `start`，不得无限重签。
+
+示例（单行命令，先将占位符替换为实际值）：
+
+```text
+TW start --repo <owner/name> --repository-id <数字ID> --label <任务标签> --subscription-key <稳定订阅键> --watch-url <用户确切确认的HTTPS服务URL> --trust-server <同一个已确认的HTTPS服务URL>
+```
+
+首次启动后，凭据自动保存为按服务 URL hash 区分的用户配置 JSON。默认位置为用户配置目录下 `webhook-watch/webhook-watch-credential-<hash>.json`；需要时可用 `--credentials-file <路径>` 指定位置。`task_watch` 持久化凭据文件的绝对路径。该 JSON 是个人凭据文件，不是 watcher 的业务状态文件；只保存路径，不复制凭据到任务状态或日志。
+
+后续启动若已有缓存凭据，不再次发送 GitHub 登录凭据。后台 `serve`、`wait` 和 `ack` 只使用已领取的个人 message token，不调用 `gh` 换取 token，也不依赖 `MESSAGE_TOKEN` 环境变量。401/403 属认证阻断，回到前台登录后再执行 `start`。
+
+个人凭据代表服务组织成员身份，不是逐仓库授权；凭据没有 TTL 或撤销机制的保证。不要复用旧的共享 token 或无 owner 的旧 consumer。旧监听迁移时记录其 scope 和未处理事项，请用户确认暂停旧托管；保留旧状态与 pending，不直接 ACK 旧 batch。在新的状态目录创建个人订阅，完成完整 GitHub 对账及 reconcile、确认就绪后再继续任务。
+
+凭据申领若返回 401/403，先在前台完成 GitHub 登录，再执行以下恢复步骤；仅继续使用用户已确切确认信任的同一服务 URL。若首次 `start` 指定了 `--credentials-file`，登录恢复及后续启动都必须使用 binding 中保存的同一绝对路径，不要另行生成路径。
+
+macOS / Linux：
+
+```bash
+WATCH_URL="<用户确切确认信任的HTTPS服务URL>"
+TRUST_SERVER="$WATCH_URL"
+WATCH_URL="$WATCH_URL" "$PY" -X utf8 "$SKILL_DIR/scripts/webhook_watch.py" login --trust-server "$TRUST_SERVER"
+```
+
+使用自定义凭据文件时，从 watcher binding 读取已保存的绝对路径，并在登录恢复时原样指定：
+
+```bash
+CREDENTIALS_FILE="<binding中记录的凭据文件绝对路径>"
+WATCH_URL="$WATCH_URL" "$PY" -X utf8 "$SKILL_DIR/scripts/webhook_watch.py" login --trust-server "$TRUST_SERVER" --credentials-file "$CREDENTIALS_FILE"
+```
+
+v1.1.1 已在 macOS 对默认服务验证首次自动申领、托管启动、评论新增/编辑接收、未确认批次重放、暂停后重启续接与 ACK。401/403 恢复和自定义凭据参数有离线回归覆盖；Windows 示例未做 Windows 原生验收，自定义服务仍须验证协议与信任边界。
+
 ### 位置与首次启动
 
 macOS / Linux：
@@ -48,13 +84,13 @@ macOS / Linux：
 WATCH_DIR="$REPO/.orchestration/<持久任务ID>"
 WATCH_REPO="<已核实的owner/name>"
 TASK_LABEL="<本任务专属标签>"
-WATCH_URL="<已配置的webhook服务地址>"
-TOKEN_FILE="$HOME/.config/orca-webhook/message-token"
+WATCH_URL="<用户确切确认信任的HTTPS服务URL>"
+TRUST_SERVER="$WATCH_URL"
 TW(){ "$PY" -X utf8 "$SKILL_DIR/scripts/task_watch.py" --state-dir "$WATCH_DIR" "$@"; }
-TW start --repo "$WATCH_REPO" --repository-id <仓库数字ID> --label "$TASK_LABEL" --subscription-key "<稳定host-owner-name-task键>" --watch-url "$WATCH_URL" --token-file "$TOKEN_FILE"
+TW start --repo "$WATCH_REPO" --repository-id <仓库数字ID> --label "$TASK_LABEL" --subscription-key "<稳定host-owner-name-task键>" --watch-url "$WATCH_URL" --trust-server "$TRUST_SERVER"
 ```
 
-先替换所有占位符。凭据文件由用户安全配置并限制读取权限；脚本只持久化文件路径，不将 token 写入系统任务定义、状态或日志。不要用 Read 等工具打开或打印凭据；系统服务不假定继承调用 Shell 的环境。
+先替换占位符并确认信任目标。凭据文件只保存个人凭据；任务状态持久化其绝对路径，不把凭据内容写入系统任务定义、状态或日志。不要打开或打印凭据；后台服务不假定继承调用 Shell 的环境。
 
 `start` 固定订阅边界并查询标签范围，不等于业务已对账。根据返回的对账版本，用 `gh` 读取当前全部任务 Issue、评论及关联 PR，处理建票至订阅启动之间可能遗漏的业务，再确认该版本。仅在采集就绪且对账确认后派发。无开发 Run 时沿用持久建票记录，不单独伪造 Run。
 
@@ -111,15 +147,6 @@ TW pause --reason "<用户明确暂停依据>"    # 仅明确用户授权，不�
 
 `C start` 在确定 `REPO` 后立即执行一次，记录本次 skill 的启动时间；重复执行保留仍在进行的最早时间，上一任务已结束后自动开始新时钟。
 
-```bash
-C start                          # 首次持久化：记录 skill 启动
-C show                           # 查看开始/结束；--json 输出原值
-S timing                         # 当前总历时、有效工作、等待、阶段与单票周期
-S timing --json                  # 机器可读结果
-S finish --reason completed      # 收口：落完成时间、写 timing.md 并输出摘要
-PT --pr <最终PR>                 # 回填最终 PR 的 ## 工作时长，保留其余正文
-```
-
 - `S init` 继承 `clock.json` 的 `started_at`；没有时钟时才以初始化时间为起点。`S finish` 写 `finished_at` 并结束时钟。
 - `S set` 只在阶段真正变化时写 `stage_since` 与 `history`，重复设置同一阶段不追加；历史只追加，不改写。
 - 总历时是墙钟时间；有效工作为开发、修复、评审、验证，等待为待派发、阻塞、等用户。并发任务按 Issue 累加，累计可能大于墙钟，不能混用。
@@ -132,11 +159,6 @@ PT --pr <最终PR>                 # 回填最终 PR 的 ## 工作时长，保�
 ## 每小时进展回报
 
 `RP` 只读当前 Run 的 `state.json` 并输出进展；不改状态、不派发、不判断 worker 健康，也不替代 worker 等待、GitHub watcher 或健康检查。
-
-```bash
-RP                # 立即输出一次
-RP --wait 3600    # 作为宿主后台任务：等待 1 小时后输出，完成后唤醒协调者
-```
 
 - 首批派发后启动一个 `RP --wait <间隔秒>` 后台计时；收到完成通知后把 stdout 原样发到终端，再挂下一个。同一时间只保留一个计时任务，默认间隔 3600 秒。
 - 只剩用户待答、评审等待或 PR 待合并时继续保留；`TW stop`、用户明确暂停或取消后停止计时，不补发历史小时报。
@@ -177,7 +199,7 @@ GUARD stop                             # 与 TW stop 同轮；hold 保留待查
 
 ## 命令骨架
 
-以下为 macOS Shell 骨架；变量及函数须在本次工具调用内初始化。
+以下为 macOS / Linux Shell 骨架；变量及函数须在本次工具调用内初始化。
 
 ```text
 orca orchestration run-create --objective "<项目> 实现" --json

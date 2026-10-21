@@ -1,3 +1,5 @@
+
+
 # 命令参考
 
 先解析本次实际位置，再使用下面的状态、等待和派发命令。`/code-review` 等是 Agent 命令，不是 Shell 命令。
@@ -5,6 +7,8 @@
 ## 位置变量（Windows：PowerShell）
 
 先将占位符替换为本次实际值；环境变量覆盖不是必填配置。安装目录取被加载的 `SKILL.md` 所在位置，开发仓库与它可以完全不同。`PY` 是单个命令名或可执行文件路径，不拼接解释器参数。
+
+上述位置检查或解释器检查失败时先纠正，不继续执行后续命令。当前套件放在 `skills/` 时就使用该目录；安装到用户级 `.agents/skills/` 时使用实际安装目录。不要把其中一种位置写死到后续命令。只读预检也可以用 `S show`；没有现有 Run 时先执行下节的创建步骤再设置 `RUN_ID`。
 
 ```powershell
 $SKILL_DIR = if ($env:ORCA_ISSUE_SKILL_DIR) { $env:ORCA_ISSUE_SKILL_DIR } else { '<本次加载的 Skill 绝对目录>' }
@@ -19,8 +23,7 @@ function C { & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_clock.py') --repo
 function PT { & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_pr_timing.py') --repo $REPO --run $RUN_ID @args }
 ```
 
-使用原生 PowerShell 工具，不从 Bash 包装调用 PowerShell。只有旧 watcher 回退需要真实 Git Bash `bash.exe`，不要选 WSL 的同名入口。只读预检也可以用 S show；没有现有 Run 时先执行下节的创建步骤再设置 RUN_ID。
-
+使用原生 PowerShell 工具执行下列命令，不从 bash 包装调用 PowerShell；只有旧 watcher 回退需要真正的 Git Bash，不选 WSL 的同名 `bash.exe`。
 
 ## 启动一次编排
 
@@ -42,8 +45,44 @@ S rule "<用户已定的、所有协调者必须遵守的约定>"
 
 系统托管的采集进程持续运行，`TW wait` 只是宿主管理的一次性本地通知桥。桥输出退出以触发后台完成通知，采集器不退出；pending 未确认时保持背压，不提前 ACK 或重复拉取下一批。`orch_wait.py` 另管 worker 消息，两者不能替代。
 
-### 位置与首次启动
+### 首次准备个人凭据
 
+首次 `TW start` 可用 `gh auth token` 获取当前 GitHub 登录凭据，并将其发送到用户明确选择信任的 HTTPS 服务领取个人 message token。HTTPS 本身不构成授权：发送前必须由用户确切确认服务 URL。`--watch-url` 与 `--trust-server` 必须使用同一个已确认的服务 URL；不得仅因 URL 来自环境变量或默认值就视为已获信任。凭据只在前台启动时申领；服务返回 401/403 时停止并提示用户先完成前台登录，再重试 `start`，不得无限重签。
+
+示例（单行命令，先将占位符替换为实际值）：
+
+```text
+TW start --repo <owner/name> --repository-id <数字ID> --label <任务标签> --subscription-key <稳定订阅键> --watch-url <用户确切确认的HTTPS服务URL> --trust-server <同一个已确认的HTTPS服务URL>
+```
+
+首次启动后，凭据自动保存为按服务 URL hash 区分的用户配置 JSON。默认位置为用户配置目录下 `webhook-watch/webhook-watch-credential-<hash>.json`；需要时可用 `--credentials-file <路径>` 指定位置。`task_watch` 持久化凭据文件的绝对路径。该 JSON 是个人凭据文件，不是 watcher 的业务状态文件；只保存路径，不复制凭据到任务状态或日志。
+
+后续启动若已有缓存凭据，不再次发送 GitHub 登录凭据。后台 `serve`、`wait` 和 `ack` 只使用已领取的个人 message token，不调用 `gh` 换取 token，也不依赖 `MESSAGE_TOKEN` 环境变量。401/403 属认证阻断，回到前台登录后再执行 `start`。
+
+个人凭据代表服务组织成员身份，不是逐仓库授权；凭据没有 TTL 或撤销机制的保证。不要复用旧的共享 token 或无 owner 的旧 consumer。旧监听迁移时记录其 scope 和未处理事项，请用户确认暂停旧托管；保留旧状态与 pending，不直接 ACK 旧 batch。在新的状态目录创建个人订阅，完成完整 GitHub 对账及 reconcile、确认就绪后再继续任务。
+
+凭据申领若返回 401/403，先在前台完成 GitHub 登录，再执行以下恢复步骤；仅继续使用用户已确切确认信任的同一服务 URL。若首次 `start` 指定了 `--credentials-file`，登录恢复及后续启动都必须使用 binding 中保存的同一绝对路径，不要另行生成路径。
+
+Windows PowerShell：
+
+```powershell
+$WATCH_URL = '<用户确切确认信任的HTTPS服务URL>'
+$TRUST_SERVER = $WATCH_URL
+$env:WATCH_URL = $WATCH_URL
+& $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/webhook_watch.py') login --trust-server $TRUST_SERVER
+```
+
+使用自定义凭据文件时，从 watcher binding 读取已保存的绝对路径，并在登录恢复时原样指定：
+
+```powershell
+$CREDENTIALS_FILE = '<binding中记录的凭据文件绝对路径>'
+$env:WATCH_URL = $WATCH_URL
+& $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/webhook_watch.py') login --trust-server $TRUST_SERVER --credentials-file $CREDENTIALS_FILE
+```
+
+v1.1.1 已在 macOS 对默认服务验证首次自动申领、托管启动、评论新增/编辑接收、未确认批次重放、暂停后重启续接与 ACK。401/403 恢复和自定义凭据参数有离线回归覆盖；Windows 示例未做 Windows 原生验收，自定义服务仍须验证协议与信任边界。
+
+### 位置与首次启动
 
 Windows PowerShell：
 
@@ -51,13 +90,13 @@ Windows PowerShell：
 $WATCH_DIR = Join-Path $REPO '.orchestration/<持久任务ID>'
 $WATCH_REPO = '<已核实的owner/name>'
 $TASK_LABEL = '<本任务专属标签>'
-$WATCH_URL = '<已配置的webhook服务地址>'
-$TOKEN_FILE = Join-Path $HOME '.config/orca-webhook/message-token'
+$WATCH_URL = '<用户确切确认信任的HTTPS服务URL>'
+$TRUST_SERVER = $WATCH_URL
 function TW { & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/task_watch.py') --state-dir $WATCH_DIR @args }
-TW start --repo $WATCH_REPO --repository-id <仓库数字ID> --label $TASK_LABEL --subscription-key '<稳定host-owner-name-task键>' --watch-url $WATCH_URL --token-file $TOKEN_FILE
+TW start --repo $WATCH_REPO --repository-id <仓库数字ID> --label $TASK_LABEL --subscription-key '<稳定host-owner-name-task键>' --watch-url $WATCH_URL --trust-server $TRUST_SERVER
 ```
 
-先替换所有占位符。凭据文件由用户安全配置并限制读取权限；脚本只持久化文件路径，不将 token 写入系统任务定义、状态或日志。不要用 Read 等工具打开或打印凭据；系统服务不假定继承调用 Shell 的环境。
+先替换占位符并确认信任目标。凭据文件只保存个人凭据；任务状态持久化其绝对路径，不把凭据内容写入系统任务定义、状态或日志。不要打开或打印凭据；后台服务不假定继承调用 Shell 的环境。
 
 `start` 固定订阅边界并查询标签范围，不等于业务已对账。根据返回的对账版本，用 `gh` 读取当前全部任务 Issue、评论及关联 PR，处理建票至订阅启动之间可能遗漏的业务，再确认该版本。仅在采集就绪且对账确认后派发。无开发 Run 时沿用持久建票记录，不单独伪造 Run。
 
@@ -113,6 +152,7 @@ TW pause --reason "<用户明确暂停依据>"    # 仅明确用户授权，不�
 ## 时长统计
 
 `C start` 在确定 `REPO` 后立即执行一次，记录本次 skill 的启动时间；重复执行保留仍在进行的最早时间，上一任务已结束后自动开始新时钟。
+
 ```powershell
 C start                          # 首次持久化：记录 skill 启动
 C show                           # 查看开始/结束；--json 输出原值
@@ -134,6 +174,7 @@ PT --pr <最终PR>                 # 回填最终 PR 的 ## 工作时长，保�
 ## 每小时进展回报
 
 `RP` 只读当前 Run 的 `state.json` 并输出进展；不改状态、不派发、不判断 worker 健康，也不替代 worker 等待、GitHub watcher 或健康检查。
+
 ```powershell
 RP                # 立即输出一次
 RP --wait 3600    # 作为宿主后台任务：等待 1 小时后输出，完成后唤醒协调者
@@ -148,17 +189,16 @@ RP --wait 3600    # 作为宿主后台任务：等待 1 小时后输出，完成
 
 首批 Issue 建好、`TW start` 之前拆出；边界与判定流程见[守护终端](guard.md)。守护只处理权限确认与停摆提示，不重派、不代替需求决定。
 
-
 Windows PowerShell：
 
 ```powershell
 $GUARD_DIR = Join-Path $REPO '.orchestration/<持久任务ID>/guard'
 function GUARD { & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_guard.py') --state-dir $GUARD_DIR @args }
 $cmd = '"{0}" -X utf8 "{1}" --state-dir "{2}" --coordinator "{3}" --run "{4}" --repo "{5}" --workspace "{5}" --branch "{6}" --skill-dir "{7}" pane' -f $PY, (Join-Path $SKILL_DIR 'scripts/orch_guard.py'), $GUARD_DIR, $env:ORCA_TERMINAL_HANDLE, $RUN_ID, $REPO, '<工作分支>', (Join-Path $SKILL_DIR 'scripts')
-orca terminal split --terminal $env:ORCA_TERMINAL_HANDLE --direction horizontal --command $cmd --json
+& orca terminal split --terminal $env:ORCA_TERMINAL_HANDLE --direction horizontal --command $cmd --json
 ```
 
-协调者是 chat 没有终端 handle 时，用 `orca terminal create --worktree active --title "orchestration-guard" --command "<同一条命令>" --json` 起独立终端。
+协调者是 chat 没有终端 handle 时，用 `& orca terminal create --worktree active --title 'orchestration-guard' --command $cmd --json` 起独立终端。
 
 日常参数骨架：
 
@@ -181,29 +221,7 @@ GUARD stop                             # 与 TW stop 同轮；hold 保留待查
 
 以下为 Windows PowerShell 派发与 worker 等待骨架；变量及函数须在本次工具调用内初始化。
 
-```text
-orca orchestration run-create --objective "<项目> 实现" --json
-# 开发（先保存派发说明与需求版本，stage 保持 ready；成功回执落盘后才设 dev）
-orca orchestration worker-start --spec "$(cat dev.txt)" --task-title "T<n> 标题 (#n)" \
-  --worktree new-top-level --repo "<实际 repo 选择器>" --name issue-<n>-<slug> --base-branch "<目标分支>" --agent "<开发Agent>" --run "$RUN_ID" --json
-# 评审（worktree 选择器用 orca worktree list 得到的完整 id）
-orca orchestration worker-start --spec "$(cat review.txt)" --worktree "id:<repoId>::<path>" --agent "<评审Agent>" --run "$RUN_ID" --json
-# 修改：仅已授权保留且仍可复用时使用开发终端
-orca orchestration worker-start --spec "$(cat fix.txt)" --terminal <开发者 handle> --worktree "id:<repoId>::<path>" --run "$RUN_ID" --json
-# 否则在同 worktree 新派修复 worker（二选一，不复用已释放 handle）
-orca orchestration worker-start --spec "$(cat fix.txt)" --agent "<开发Agent>" --worktree "id:<repoId>::<path>" --run "$RUN_ID" --json
-# 等待：挂后台。空心跳在脚本里 ack，不会把 “You have 1 orchestration message” 送进模型。
-# 退出码 0：普通 check JSON 或 kind=health_alert，先区分类型；非零是查询/执行错误。
-# 普通批次处理完用真实 deliveryId 续等；health_alert 没有伪造的 deliveryId，处置方式见下文。
-# 不要另开 check --wait；原批次未处理完不能 ack。
-"$PY" -X utf8 "$SKILL_DIR/scripts/orch_wait.py" --run "$RUN_ID"   # run_in_background
-orca orchestration reply --id <msg> --body "<答复>" --json
-"$PY" -X utf8 "$SKILL_DIR/scripts/orch_wait.py" --run "$RUN_ID" --ack <delivery>   # run_in_background
-orca orchestration worker-retain --dispatch <开发 dispatch>   # 仅用户授权保留已结算开发终端时执行；否则 worker-release
-orca orchestration worker-release --dispatch <dispatch>       # 评审者完成后、或合并后释放
-```
-
-### Windows PowerShell 派发与 worker 等待骨架
+### PowerShell 派发与 worker 等待骨架
 
 替换占位符后执行；不沿用 POSIX 的 `\` 续行、`cat` 命令替换或解释器调用语法。先用位置变量小节初始化本次 Shell：
 
@@ -215,6 +233,16 @@ $spec = Get-Content -Raw -Encoding UTF8 '<开发任务说明绝对路径>'
 orca orchestration worker-start --spec $spec --task-title 'T<n> 标题 (#n)' --worktree new-top-level --repo '<实际 repo 选择器>' --name 'issue-<n>-<slug>' --base-branch '<目标分支>' --agent '<开发Agent>' --run $RUN_ID --json
 $reviewSpec = Get-Content -Raw -Encoding UTF8 '<评审说明绝对路径>'
 orca orchestration worker-start --spec $reviewSpec --worktree 'id:<repoId>::<path>' --agent '<评审Agent>' --run $RUN_ID --json
+# 修改：仅已授权保留且仍可复用时使用开发终端；否则在同 worktree 新派修复 worker（二选一，不复用已释放 handle）
+$fixSpec = Get-Content -Raw -Encoding UTF8 '<修复说明绝对路径>'
+orca orchestration worker-start --spec $fixSpec --terminal '<开发者 handle>' --worktree 'id:<repoId>::<path>' --run $RUN_ID --json
+orca orchestration worker-start --spec $fixSpec --agent '<开发Agent>' --worktree 'id:<repoId>::<path>' --run $RUN_ID --json
+# 等待退出码 0：普通 check JSON 或 kind=health_alert，先区分类型；非零是查询/执行错误。
+# 普通批次处理完用真实 deliveryId 续等；health_alert 没有伪造的 deliveryId。
+# 不要另开 check --wait；原批次未处理完不能 ack。
+orca orchestration reply --id '<msg>' --body '<答复>' --json
+orca orchestration worker-retain --dispatch '<开发 dispatch>'   # 仅用户授权保留已结算开发终端时执行；否则 worker-release
+orca orchestration worker-release --dispatch '<dispatch>'       # 评审者完成后、或合并后释放
 # 下面的长等待交给宿主后台工具；新 Shell 使用真实绝对路径，不依赖此前函数/变量
 & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_wait.py') --run $RUN_ID
 & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_wait.py') --run $RUN_ID --ack '<已处理的真实 deliveryId>'

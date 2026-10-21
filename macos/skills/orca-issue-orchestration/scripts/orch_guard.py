@@ -613,7 +613,7 @@ def options_from(a):
     if a.extra_allow:
         extra = policy.load_extra(a.extra_allow)
     return {
-        "coordinator": a.coordinator,
+        "coordinator": a.coordinator or os.environ.get("ORCA_TERMINAL_HANDLE", ""),
         "run": a.run,
         "repo": a.repo,
         "workspace": a.workspace or a.repo,
@@ -804,6 +804,11 @@ def main(argv=None):
     guard.dir.mkdir(parents=True, exist_ok=True)
     guard.holds_dir.mkdir(parents=True, exist_ok=True)
     guard.verdicts_dir.mkdir(parents=True, exist_ok=True)
+    if not guard.opts.get("coordinator") and not guard.opts.get("run"):
+        # A guard with nothing to watch is a silent no-op; say so instead.
+        print("guard 需要 --coordinator 或 --run 至少一项：没有可观察的终端，守护不会做任何事",
+              file=sys.stderr)
+        return 2
     if a.cmd == "pane":
         guard.log(f"[guard] pane started · coordinator={guard.opts['coordinator'] or '-'} "
                   f"run={guard.opts['run'] or '-'} state={guard.dir}")

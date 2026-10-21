@@ -64,7 +64,7 @@ class OrchReportTest(unittest.TestCase):
     def test_missing_state_fails_loudly(self):
         result = self.report()
         self.assertEqual(result.returncode, 2)
-        self.assertIn("state.json not found", result.stderr)
+        self.assertIn("还没初始化", result.stderr)
 
     def test_zero_wait_prints_immediately(self):
         self.write_state({})

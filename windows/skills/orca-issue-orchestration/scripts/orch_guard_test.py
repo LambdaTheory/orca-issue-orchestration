@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guard loop tests against a fake orca CLI. Run: python3 -X utf8 -B orch_guard_test.py"""
 import json
+import os
 import sys
 import tempfile
 import time
@@ -526,6 +527,20 @@ class TestVerdict(GuardCase):
             self.assertEqual(guard_mod.cmd_verdict(args, guard), 0)
         payload = json.loads(next((self.state / "holds").glob("*.json")).read_text(encoding="utf-8"))
         self.assertEqual(payload["state"], "denied-by-user")
+
+
+class TestStartupGuards(GuardCase):
+    def test_pane_without_target_refuses(self):
+        import io
+        from contextlib import redirect_stderr
+        from unittest.mock import patch
+        buffer = io.StringIO()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ORCA_TERMINAL_HANDLE", None)
+            with redirect_stderr(buffer):
+                code = guard_mod.main(["--state-dir", str(self.state), "pane"])
+        self.assertEqual(code, 2)
+        self.assertIn("--coordinator", buffer.getvalue())
 
 
 class TestStatus(GuardCase):

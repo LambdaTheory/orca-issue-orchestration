@@ -28,8 +28,8 @@
 - 等待：分析拆解并建票打标完成后才 `TW start`，完成初始对账后挂 `TW wait` 本地通知桥；安装或调用 Skill 不启动。当前任务标签下有开放票就保持系统托管采集；处理并 ACK 后只重挂桥。每轮恢复/等待前检查状态，采集死亡优先幂等恢复。开发评审另挂 Orca 等待；仅用户待答时只停 worker 等待
 - 监听绑定与检查点：<真实 owner/name、repository-id、唯一任务标签、稳定订阅键、绝对 watcher 状态目录、真实系统任务标识与后台通知桥 handle/status；标签动态查询覆盖新增票，不以首批票单为准>
 - 托管环境：<macOS launchd / Linux systemd 用户服务 / Windows 当前用户交互登录计划任务；权限与登录环境核查结果；不自动提权、启用 linger 或存储登录密码>
-- GitHub 消息来源：<webhook 服务地址，如 https://githubwebhook.madebynight.top；可用环境变量覆盖；记录来源>
-- 凭据文件：<watcher 可读的受限文件绝对路径；只记录路径不记录令牌，系统托管不默认继承 Shell 环境>
+- GitHub 消息来源：<webhook 服务地址，如 https://githubwebhook.madebynight.top；须由用户确切信任后才能用于个人凭据申领；记录来源>
+- 个人凭据文件：<用户配置目录下 JSON 凭据文件的绝对路径；仅记录路径，不记录内容；按服务 URL hash 区分，后台任务不依赖 Shell 环境>
 - 新增与收口：<新增票/同步收尾使用 scope begin/end；全部标签票核实 CLOSED、无 scope/对账/同步待办且批次已确认，才 TW stop 并撤销托管；明确暂停用 pause 并记授权，交接不停止采集>
 - worker 健康检查：默认间隔 60 秒、done/idle 未结算宽限 120 秒、无可见进展阈值 900 秒；对应 orch_wait.py 的 --health-interval / --idle-grace / --stale-after。健康异常才唤醒模型，告警先核实，不自动判死或重派；仅用户待答时不启动该检查
 - 守护终端：<状态目录绝对路径；停摆提示阈值 idle-seconds 默认 300、max-nudges 默认 3；待命 Agent 开/关；extra_allow 正则补充的真实需求；用户是否明确要求全量放行（默认不接受）>
