@@ -2,6 +2,8 @@
 
 从 SKILL.md 执行主线进入。守护解决一个具体问题：协调者或 worker 卡在**权限确认弹窗**上，整条编排停下来等人。它不改变编排协议，不代替用户做需求决定，也不重派任务。
 
+> 平台：本文件启动示例为 Windows PowerShell；macOS / Linux 版本见 `macos/skills/orca-issue-orchestration/references/guard.md` 的 bash 示例。
+
 ## 为什么不是"派一个 Agent 去点批准"
 
 权限弹窗没有跨进程批准接口。第二个 Agent 无法替第一个会话点"允许"。真实可用的只有两条通路：
@@ -17,15 +19,15 @@ hook 那条路留在 `orch_policy.py hook`，是否安装由用户单独决定�
 
 启动时机在执行主线第 3 步：首批 Issue 建好、`TW start` 之前。先有守卫再派发。
 
-```bash
-GUARD_DIR="$REPO/.orchestration/<task>/guard"
-orca terminal split --terminal "$ORCA_TERMINAL_HANDLE" --direction horizontal \
-  --command "\"$PY\" -X utf8 \"$SKILL_DIR/scripts/orch_guard.py\" --state-dir \"$GUARD_DIR\" --coordinator \"$ORCA_TERMINAL_HANDLE\" --run \"$RUN_ID\" --repo \"$REPO\" --workspace \"$REPO\" --branch \"<工作分支>\" --skill-dir \"$SKILL_DIR/scripts\" pane"
+```powershell
+$GUARD_DIR = Join-Path $REPO '.orchestration/<task>/guard'
+$cmd = '"{0}" -X utf8 "{1}" --state-dir "{2}" --coordinator "{3}" --run "{4}" --repo "{5}" --workspace "{5}" --branch "{6}" --skill-dir "{7}" pane' -f $PY, (Join-Path $SKILL_DIR 'scripts/orch_guard.py'), $GUARD_DIR, $env:ORCA_TERMINAL_HANDLE, $RUN_ID, $REPO, '<工作分支>', (Join-Path $SKILL_DIR 'scripts')
+& orca terminal split --terminal $env:ORCA_TERMINAL_HANDLE --direction horizontal --command $cmd
 ```
 
-协调者是 chat 而不是终端时没有 `ORCA_TERMINAL_HANDLE`，改用 `orca terminal create --command ...` 起一个独立终端，其余参数相同。
+协调者是 chat 而不是终端时没有 `ORCA_TERMINAL_HANDLE`，改用 `& orca terminal create --worktree active --title 'orchestration-guard' --command $cmd` 起一个独立终端，其余参数相同。
 
-收口与 `TW stop` 同轮执行 `orch_guard.py --state-dir "$GUARD_DIR" stop`。用户明确暂停时用 `pause --reason <依据>`，不冒充完成。
+收口与 `TW stop` 同轮执行 `GUARD stop`（GUARD 函数见命令参考的守护终端小节）。用户明确暂停时用 `GUARD pause --reason <依据>`，不冒充完成。
 
 ## 状态目录
 

@@ -20,7 +20,13 @@ def state_dir(repo, run):
 
 
 def load(d):
-    return json.loads((d / "state.json").read_text(encoding="utf-8"))
+    path = d / "state.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        sys.exit(f"{path} 不存在：这个 Run 还没初始化，先执行 init --objective \"...\"")
+    except json.JSONDecodeError as exc:
+        sys.exit(f"{path} 无法解析（{exc}）；修复或从备份恢复，不要直接覆盖")
 
 
 def save(d, s):

@@ -1,6 +1,6 @@
 # Orca Issue Orchestration Skill Suite
 
-**当前版本：v1.1.0** · Windows / macOS 双平台 · 11 个项目级 skills
+**当前版本：v1.1.1** · Windows / macOS 双平台 · 11 个项目级 skills
 
 面向 Orca 的目标驱动开发套件：从仓库探查、需求确认和 GitHub Issue 开始，由协调者安排独立 Agent 开发、评审与修复，最终按授权交付。协调者不代替 worker 写业务实现。
 
@@ -16,14 +16,14 @@
 
 - 套件版本由根目录 `VERSION` 记录；这是整个套件的版本，不改变内含第三方 skill 的上游版本号。
 - 源码分别位于 `windows/skills/` 和 `macos/skills/`，按实际执行宿主选择，不能混装两份同名 skill。
-- 两平台源码只差一份 `references/commands.md`（本平台命令参考）；其余文件完全相同，避免两份手工维护产生漂移。
+- 两平台源码只差参考文档中的平台示例：`references/commands.md` 按平台整套生成，`references/guard.md` 启动示例与 `references/pr.md` 平台选择说明随平台变化；其余文件完全相同，避免两份手工维护产生漂移。
 - 对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从源码安装。两个平台包均包含完整的 11 个 skills、平台说明和许可文件。
 - `SHA256SUMS.txt` 用于核对下载文件；变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 执行宿主 | 源码 | Release 文件 |
 |---|---|---|
-| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v1.1.0-windows.zip` |
-| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v1.1.0-macos.zip` |
+| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v1.1.1-windows.zip` |
+| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v1.1.1-macos.zip` |
 
 ## 核心流程
 
@@ -65,7 +65,7 @@
 - Node.js 用于 HTML 方案打包和相关测试。
 - Windows 使用 PowerShell；仅旧 GitHub watcher 回退需要真正的 Git Bash，不能选 WSL 的同名 `bash.exe`。
 - macOS 使用 bash / zsh。非交互进程也必须能找到实际 Python 和其他命令。
-- 用 webhook 监听 Issue 时按平台的命令参考准备消息凭据，需要时用 `WATCH_URL` 覆盖默认 webhook 服务地址；发布包不包含令牌，不会替你创建订阅或启动 watcher。
+- 用 webhook 监听 Issue 时按平台的命令参考申领个人凭据：首次 `TW start` 用 `gh auth token` 换取当前 GitHub 登录凭据，仅发送到你明确信任的 HTTPS 服务换取个人 message token，凭据自动保存为按服务 URL hash 区分的本机 JSON；401/403 属认证阻断，回到前台登录后再启动。需要时用 `WATCH_URL` 覆盖默认 webhook 服务地址。发布包不包含令牌，不会替你创建订阅或启动 watcher；旧监听迁移不复用旧共享 token 或无 owner 的旧 consumer，由用户确认暂停旧托管后在新状态目录建立个人订阅并完成对账。
 
 ## 安装
 
@@ -80,7 +80,7 @@
 ```powershell
 git clone https://github.com/LambdaTheory/orca-issue-orchestration.git
 cd orca-issue-orchestration
-git checkout v1.0.3
+git checkout v1.1.1
 # 首次安装到目标项目；把路径替换为实际项目目录。
 $Destination = "E:/your-project/.agents/skills"
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
@@ -94,7 +94,7 @@ Copy-Item -Path "./windows/skills/*" -Destination $Destination -Recurse
 ```bash
 git clone https://github.com/LambdaTheory/orca-issue-orchestration.git
 cd orca-issue-orchestration
-git checkout v1.0.3
+git checkout v1.1.1
 # 首次安装到目标项目；把路径替换为实际项目目录。
 DEST="/path/to/your-project/.agents/skills"
 mkdir -p "$DEST"
@@ -149,7 +149,7 @@ python3 -X utf8 -B -m unittest discover -s macos/skills/orca-issue-orchestration
 node --test macos/skills/html-plan/runtime/pack.test.mjs
 ```
 
-v1.0.1 的两平台脚本均在 macOS 运行回归；Windows 原生 `.cmd` 启动、PowerShell 命令及实际 Orca 入口未在 Windows 实机复验，不能把这些结果视为 Windows 端到端认证。webhook 编辑事件使用本地模拟验证，未验证线上服务投递。
+v1.1.1 源码及两平台包分别通过 466 项 Python 测试和 5 项 Node 测试，均在 macOS 执行。已对默认线上服务验证首次自动申领个人凭据、launchd 托管、评论新增/编辑事件、pending 重放、暂停后重启续接、ACK 和受控停止。Windows 原生 PowerShell 分支与计划任务托管未在 Windows 实机复验，不能把这些结果视为 Windows 端到端认证。服务当前按组织成员准入与服务覆盖范围授权，不保证逐用户仓库权限或 Token 自动到期/撤销。
 
 这些是现有脚本的定向回归，不会新建真实开发任务或启动真实 GitHub 监听。完整 Orca 编排仍依赖用户的 Agent、模型、仓库和本机环境；本 Release 不宣称已在所有组合上跑过完整流程。
 

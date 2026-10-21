@@ -1,5 +1,15 @@
 # 变更记录
 
+## v1.1.1 — 2026-10-21
+
+- watcher 凭据改为**个人 message token**：首次 `TW start` 在前台用 `gh auth token` 申领当前 GitHub 登录凭据，仅发送到用户**明确信任**的 HTTPS 服务换取个人 token；客户端**自动存储**（返回凭据保存为按服务 URL hash 区分的用户配置 JSON，任务状态只记路径，不写系统任务定义或日志）。401/403 属认证阻断，回到前台登录后再 `start`，不无限重签；后台 serve/wait/ack 只读已保存的消息凭据，不调用 `gh auth token` 换取令牌；范围对账仍使用 GitHub CLI。旧 `MESSAGE_TOKEN` 不再作为凭据来源。
+- **旧 consumer 迁移**：旧共享 `--token-file` 接口停用，给出迁移指引而非静默兼容；不复用旧共享 token 或无 owner 的旧 consumer。旧监听由用户确认暂停旧托管，保留旧状态与 pending、不直接 ACK 旧 batch，在新状态目录建个人订阅并完成完整对账后才继续。
+- 首次运行失败信息可执行化：`state.json` 缺失/损坏、报告缺初始状态等给出明确下一步，不再输出 cryptic 错误；守护缺 `--coordinator`/`--run` 时明确拒绝启动（无可观察终端是沉默空转）。
+- 平台文档按平台生成：Windows `commands.md` 移除 POSIX text 块（`$(cat)`、续行），保留 PowerShell 派发同等功能（含修复/答复/保留释放/健康提示说明）；guard 的 `--command` 用 `&` 调用 operator；`guard.md` Windows 启动示例改用 commands 对应 PowerShell；`pr.md` 等参考明示平台选择。双平台共享文件要求字节一致，构建脚本的清单校验保证不漂移。
+- 验证：源码及两平台包分别运行 12 个 Python 测试套件（466 项）与 html-plan 的 5 项 Node 测试；上游服务端 36 项、客户端/集成 97 项及 TypeScript 检查通过。所有执行宿主均为 macOS。
+- 线上验收：在独立测试票 #6 完成 skill 首次自动签发、launchd 托管启动、GitHub 评论新增/编辑投递、pending 重放、暂停/重启保留同一待确认批次、ACK 与全部关闭后的受控停止。关闭时遇一次 GitHub EOF，保留 pending，成功回读后才 ACK/停止；没有操作既有业务 Run。
+- 边界：未在 Windows 实机复验 PowerShell 分支与计划任务托管。服务目前按组织成员准入和服务覆盖范围授权，不等于逐用户 GitHub 仓库权限；个人 Token 到期/撤销机制仍由服务端决定，本版不提供该保证。
+
 ## v1.1.0 — 2026-10-20
 
 - 新增守护终端（guard）：编排期间在独立终端常驻。协调者或 worker 停在权限确认弹窗时，守护读取渲染后的屏幕、按静态白名单判定，命中才按键并在按键后复核弹窗是否关闭；越界、凭据、强推、越界删除等一律挂起等人，不盲发按键。判定全程写入 `audit.jsonl`，支持 `pause` 急停与幂等重启。

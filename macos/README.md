@@ -1,4 +1,4 @@
-# Orca Issue Orchestration · macos · v1.1.0
+# Orca Issue Orchestration · macos · v1.1.1
 
 本平台包含完整 11 个 skills，使用 bash / zsh 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
 
@@ -11,6 +11,13 @@
 `ORCA_ISSUE_SKILL_DIR` 可覆盖主 skill 的安装目录；`ORCA_ISSUE_PYTHON` 可指定 Python 3 解释器。路径必须按当前执行宿主填写，安装目录与开发项目目录不是同一个概念。
 
 按需读取参考文档，不把所有历史记录加载到协调者上下文。只按已有授权交付；首次安装不会自动创建 Run、Issue、订阅或开发任务。
+
+## v1.1.1 升级说明
+
+- watcher 凭据改为个人 message token：首次 `TW start` 在前台用 `gh auth token` 申领，仅发送到用户明确信任的 HTTPS 服务，凭据自动保存为按服务 URL hash 区分的本机 JSON；后台 serve/wait/ack 只读已保存凭据，不调用 `gh` 换 token。
+- 旧共享 `--token-file` 接口停用；迁移旧监听不复用旧共享 token 或无 owner 的旧 consumer——请用户确认暂停旧托管，保留旧状态与 pending，在新状态目录建立个人订阅并完成对账后再继续。
+- 首次运行失败给出可执行指引（`state.json` 缺失/损坏等不再报 cryptic 错误）；守护缺 `--coordinator`/`--run` 时明确拒绝启动。
+- 466 项 Python 测试与 5 项 Node 测试通过；已在 macOS 对默认线上服务完成个人凭据、launchd、评论新增/编辑、pending/ACK、重启续接及受控停止验收。未在 Windows 实机复验 Windows 包内容。
 
 ## v1.1.0 升级说明
 

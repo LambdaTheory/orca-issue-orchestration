@@ -4,15 +4,18 @@
 默认禁止真实 gh 子进程 / 真实 HTTP / 真实系统托管：
 - tw.subprocess.run → AssertionError：gh 子查询必须安装 case 级 tw._run_gh 假件；
   （gh_path 用 sys.executable 指向已存在文件，仅用于通过绑定校验）
-- ww._OPENER.open → AssertionError：HTTP 必须用 install_http安装 FakeHttp；
+- ww._gh_token → AssertionError：凭据签发绝不发生在测试里；需要签发的用例
+  显式 patch ww._gh_token 假件；
+- ww._OPENER.open → AssertionError：HTTP 必须用 install_http 安装 FakeHttp；
 - tw.TaskService → FakeTaskService：prepare 只探测计数；ensure 注册并写匹配
   generation 的心跳；status 未注册返回 registered=False；remove 清状态。
   core 的 _wait_ready / collect_status / stop 走真实逻辑，不 mock 成功。
 - FakeTime：time/monotonic/sleep 各有有限调用预算，越界抛 AssertionError
   （防死循环）；sleep 触发 on_sleep(seconds) 的钩子，长循环 case 用它改
   desired 结束（不使用生产型 MAX_STEPS 类测试开关）。
-- 凭据文件 chmod 600；线程 case（真实 webhook 锁竞争/stop 遇在途批次）
-  用真实时间，时长有界，不触真实服务。
+- 凭据用个人凭据 JSON（schema_version=1 + message_token + owner），文件
+  0600；线程 case（真实 webhook 锁竞争/stop 遇在途批次）用真实时间，时长
+  有界，不触真实服务。服务端协议：create/events/ack 响应均携带 owner。
 """
 from __future__ import annotations
 
@@ -20,7 +23,6 @@ import contextlib
 import io
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -40,13 +42,15 @@ sys.path.insert(0, HERE)
 import task_watch as tw  # noqa: E402
 import webhook_watch as ww  # noqa: E402
 
-TOKEN_VALUE = "secret-token-123"
+TOKEN_VALUE = "secret-token-123"          # 用于 gh 输出脱敏断言
+SRV_TOKEN = "srv-message-token"
+OWNER = {"github_user_id": "100", "github_login": "octo"}
 ERR_BODY = {"error": {"code": "t", "message": "t error"}}
 
 
-def consumer_payload(cid="c-1", boundary=5):
+def consumer_payload(cid="c-1", boundary=5, owner=None):
     return {"consumer_id": cid, "initial_boundary_seq": boundary,
-            "cursor_seq": boundary}
+            "cursor_seq": boundary, "owner": owner or OWNER}
 
 
 def sample_event(seq=1, number=42):
@@ -55,10 +59,10 @@ def sample_event(seq=1, number=42):
             "subject": {"kind": "issue", "number": number}, "actor": "alice"}
 
 
-def batch_payload(batch_id="b1", events=None):
+def batch_payload(batch_id="b1", events=None, owner=None):
     return {"consumer_id": "c-1", "batch_id": batch_id,
             "through_seq": (events[-1]["seq"] if events else 0),
-            "events": events or []}
+            "events": events or [], "owner": owner or OWNER}
 
 
 # ---------------------------------------------------------------- 假件
@@ -193,14 +197,20 @@ class FakeHttp:
         split = urlsplit(req.full_url)
         path = split.path + ("?" + split.query if split.query else "")
         rec = SimpleNamespace(method=req.get_method(), path=path,
-                              body=req.data)
+                              body=req.data,
+                              headers={k.lower(): v
+                                       for k, v in req.header_items()})
         self.requests.append(rec)
         status, payload = self.fn(rec)
         data = (payload if isinstance(payload, bytes)
                 else json.dumps(payload).encode("utf-8"))
         fp = io.BytesIO(data)
+        if 300 <= status < 400:
+            raise urllib.error.HTTPError(req.full_url, status, "redirect",
+                                         None, fp)
         if status >= 400:
-            raise urllib.error.HTTPError(req.full_url, status, "http", None, fp)
+            raise urllib.error.HTTPError(req.full_url, status,
+                                         "http %d" % status, None, fp)
         return fp
 
 
@@ -217,6 +227,7 @@ class GWCase(unittest.TestCase):
         tw._SECRETS = set()
         FakeTaskService.reset()
         self._old_watch_dir = os.environ.pop("WATCH_DIR", None)
+        self._old_message_token = os.environ.pop("MESSAGE_TOKEN", None)
         # 时间可控（越预算断言）；真实 gh 子进程与真实 HTTP 默认禁止
         self.patch(tw, "time", self.clock)
         self.patch(tw, "TaskService", FakeTaskService)
@@ -225,12 +236,15 @@ class GWCase(unittest.TestCase):
             TimeoutExpired=subprocess.TimeoutExpired))
         self.patch(ww, "_OPENER", FakeHttp())
         self.patch(ww, "RETRY_SLEEP", 0)
-        # 受限凭据文件（0600，内容即令牌）
-        self.token_file = os.path.join(self.sdir, "mkt.token")
-        with open(self.token_file, "w", encoding="utf-8") as f:
-            f.write(TOKEN_VALUE + "\n")
-        os.chmod(self.token_file, 0o600)
-        self.token_path = os.path.realpath(self.token_file)
+        # gh 子进程/签发默认禁止：常规用例走已保存个人凭据缓存
+        def forbid_gh(*a, **k):
+            raise AssertionError("测试禁止 gh/凭据签发；需要签发的用例显式 patch")
+        self.patch(ww, "_gh_token", forbid_gh)
+        # 个人凭据 JSON（schema_version=1，0600），替代旧的原始令牌文件
+        self.cred_file = os.path.join(self.sdir, "ww-credential.json")
+        ww.save_credentials_file(self.cred_file, "https://fake.invalid",
+                                 SRV_TOKEN, OWNER)
+        self.cred_path = os.path.realpath(self.cred_file)
         # gh 可执行占位：指向已存在文件（sys.executable）；子进程默认被禁止
         self.gh_path = os.path.realpath(sys.executable)
         self.gh_calls = []
@@ -238,7 +252,8 @@ class GWCase(unittest.TestCase):
             "repo": "octo/hello", "repository_id": "1001",
             "task_label": "task-t1", "subscription_key": "run-1",
             "watch_url": "https://fake.invalid",
-            "token_file": self.token_path, "gh_path": self.gh_path,
+            "credentials_file": self.cred_path,
+            "owner_github_user_id": "100", "gh_path": self.gh_path,
             "start": "now"}
         self.default_service_binding = {
             "platform": "fake", "name": "orca-task-watch-fake",
@@ -252,6 +267,10 @@ class GWCase(unittest.TestCase):
             os.environ.pop("WATCH_DIR", None)
         else:
             os.environ["WATCH_DIR"] = self._old_watch_dir
+        if self._old_message_token is None:
+            os.environ.pop("MESSAGE_TOKEN", None)
+        else:
+            os.environ["MESSAGE_TOKEN"] = self._old_message_token
 
     def _no_real_subprocess(self, argv, *a, **k):
         raise AssertionError(
@@ -345,12 +364,12 @@ class GWCase(unittest.TestCase):
                 "--repository-id", self.binding["repository_id"],
                 "--task-label", self.binding["task_label"],
                 "--subscription-key", self.binding["subscription_key"],
-                "--token-file", self.token_file,
+                "--credentials-file", self.cred_file,
                 "--watch-url", self.binding["watch_url"],
                 "--gh-path", self.gh_path,
                 "--state-dir", sdir or self.sdir]
         for key, value in over.items():
-            argv += ["--" + key.replace("_", "-"), value]
+            argv += ["--" + key.replace("_", "-"), str(value)]
         return argv
 
     def seeded_control(self, **over):
@@ -378,9 +397,10 @@ class GWCase(unittest.TestCase):
 
     def init_consumer(self, cid="c-1"):
         self.write_webhook_state(
-            subscription_key="run-1", repository_id="1001", start="now",
-            watch_url="https://fake.invalid", consumer_id=cid,
-            initial_boundary_seq=5, cursor_seq=5, pending=None)
+            schema_version=1, subscription_key="run-1", repository_id="1001",
+            start="now", watch_url="https://fake.invalid", consumer_id=cid,
+            initial_boundary_seq=5, cursor_seq=5, owner_github_user_id="100",
+            pending=None)
 
 
 # ---------------------------------------------------------------- start
@@ -435,8 +455,10 @@ class StartTests(GWCase):
         self.write_webhook_state(repository_id="2002")
         rc, _, err = self.run_cli(["start", "--state-dir", self.sdir])
         self.assertNotEqual(rc, 0)
-        self.assertIn("订阅绑定不匹配", err)
+        # 写 control 之前即被 webhook 状态稳定参数预检拒绝
         self.assertIn("repository_id", err)
+        self.assertIn("已绑定不同", err)
+        self.assertEqual(self.control().get("binding"), self.binding)
         self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
 
     def test_start_gh_path_must_exist(self):
@@ -451,7 +473,7 @@ class StartTests(GWCase):
         fake = self.install_http(lambda rec: (200, consumer_payload()))
         rc, out, err = self.run_cli(self.start_argv())
         self.assertEqual(rc, 0, err)
-        self.assertNotIn(TOKEN_VALUE, out + err)
+        self.assertNotIn(SRV_TOKEN, out + err)
         data = json.loads(out.strip().splitlines()[-1])  # 末行为状态 JSON
         self.assertEqual(data["desired"], "running")
         self.assertTrue(data["service"]["running"])
@@ -461,12 +483,15 @@ class StartTests(GWCase):
         self.assertEqual(control["generation"], 1)
         self.assertEqual(control["scope_check"]["version"], 1)
         self.assertEqual(control["known_issues"], [7, 9])
-        # 绑定只存凭据路径；令牌内容不落盘
-        self.assertEqual(control["binding"]["token_file"], self.token_path)
-        self.assertNotIn(TOKEN_VALUE, json.dumps(control))
-        # init POST 参数正确
+        # 绑定存凭据文件路径与 owner；令牌内容不落盘
+        self.assertEqual(control["binding"]["credentials_file"], self.cred_path)
+        self.assertEqual(control["binding"]["owner_github_user_id"], "100")
+        self.assertNotIn(SRV_TOKEN, json.dumps(control))
+        # init POST 使用已保存个人凭据，参数正确
         posts = [r for r in fake.requests if r.method == "POST"]
         self.assertEqual([r.path for r in posts], ["/v1/consumers"])
+        self.assertEqual(posts[0].headers.get("authorization"),
+                         "Bearer " + SRV_TOKEN)
         self.assertEqual(json.loads(posts[0].body),
                          {"subscription_key": "run-1",
                           "repository_id": "1001", "start": "now"})
@@ -542,23 +567,15 @@ class StartTests(GWCase):
         self.assertIn("范围为空", err)
         self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
 
-    def test_start_token_file_rules(self):
-        # 存在但权限过宽（0644）→ 拒绝且不落任何状态
-        loose = os.path.join(self.sdir, "loose.token")
-        with open(loose, "w", encoding="utf-8") as f:
-            f.write("other-token\n")
-        os.chmod(loose, 0o644)
-        rc, _, err = self.run_cli(self.start_argv(token_file=loose))
+    def test_start_token_file_is_old_interface(self):
+        # 旧 --token-file（原始共享令牌）接口显式报错并给迁移指引；不落状态
+        rc, _, err = self.run_cli(self.start_argv(token_file=self.sdir))
         self.assertNotEqual(rc, 0)
-        self.assertIn("凭据文件必须属于当前用户", err)
+        self.assertIn("--token-file", err)
+        self.assertIn("login", err)
+        self.assertNotIn("Traceback", err)
         self.assertIsNone(self.control().get("binding"))
         self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
-        # 凭据文件不存在
-        rc, _, err = self.run_cli(
-            self.start_argv(token_file=os.path.join(self.sdir, "missing")))
-        self.assertNotEqual(rc, 0)
-        self.assertIn("No such file", err)
-        self.assertIsNone(self.control().get("binding"))
 
 
 # ---------------------------------------------------------------- gh 查询
@@ -630,7 +647,7 @@ class GhQueryTests(GWCase):
                                  "repos/octo/hello"])
 
     def test_run_gh_failure_sanitizes_secret_and_bad_json(self):
-        tw._read_token(self.token_file)  # 注册 secret（_safe 覆盖）
+        tw._SECRETS.add(TOKEN_VALUE)  # 模拟采集时注册的凭据（_safe 覆盖）
 
         def fake_run(argv, *a, **k):
             raise subprocess.TimeoutExpired(argv, 30)
@@ -938,7 +955,7 @@ class StopTests(GWCase):
     def test_stop_success_full_flow(self):
         self.stop_seeded()
         self.install_gh(entries=[(7, "closed")])
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         FakeTaskService.state["registered"] = True
         rc, out, _ = self.run_cli(["stop", "--state-dir", self.sdir])
         self.assertEqual(rc, 0, out)
@@ -969,7 +986,7 @@ class StopTests(GWCase):
     def test_stop_blocked_pending_restores_running(self):
         self.stop_seeded()
         self.install_gh(entries=[(7, "closed")])
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         self.write_webhook_state(pending={"batch_id": "b9", "events": []})
         rc, _, err = self.run_cli(["stop", "--state-dir", self.sdir])
         self.assertNotEqual(rc, 0)
@@ -995,7 +1012,7 @@ class StopTests(GWCase):
     def test_stop_blocked_open_issue_restores_running(self):
         self.stop_seeded(states=(("7", "open"),))
         self.install_gh(entries=[(7, "open")])
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         rc, _, err = self.run_cli(["stop", "--state-dir", self.sdir])
         self.assertNotEqual(rc, 0)
         self.assertIn("仍有未关闭", err)
@@ -1007,7 +1024,7 @@ class StopTests(GWCase):
         # 已知票 #12 已失去标签但已 CLOSED → 放行并注销
         self.stop_seeded(known=(7, 12))
         self.install_gh(entries=[(7, "closed")], missing={12: "closed"})
-        self.install_http(lambda rec: (200, {}))
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
         FakeTaskService.state["registered"] = True
         rc, out, _ = self.run_cli(["stop", "--state-dir", self.sdir])
         self.assertEqual(rc, 0, out)
@@ -1022,7 +1039,7 @@ class StopTests(GWCase):
                 self.stop_seeded(known=(7, 12))
                 self.install_gh(entries=[(7, "closed")],
                                 missing={12: missing})
-                self.install_http(lambda rec: (200, {}))
+                self.install_http(lambda rec: (200, batch_payload(None, [])))
                 rc, _, err = self.run_cli(["stop", "--state-dir", self.sdir])
                 self.assertNotEqual(rc, 0)
                 for needle in needles:
@@ -1068,7 +1085,7 @@ class StopTests(GWCase):
             return {"id": 1001}
 
         self.patch(tw, "_run_gh", fake)
-        self.install_http(lambda rec: (200, {}))
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
         rc, _, err = self.run_cli(["stop", "--state-dir", self.sdir])
         self.assertNotEqual(rc, 0)
         self.assertEqual(self.control()["desired"], "running")
@@ -1083,7 +1100,7 @@ class StopTests(GWCase):
     def test_stop_remove_failure_desired_stopped_then_retry(self):
         self.stop_seeded()
         self.install_gh(entries=[(7, "closed")])
-        self.install_http(lambda rec: (200, {}))
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
         FakeTaskService.state["registered"] = True
         FakeTaskService.state["remove_error"] = "平台命令失败"
         rc, _, err = self.run_cli(["stop", "--state-dir", self.sdir])
@@ -1110,7 +1127,7 @@ class StopTests(GWCase):
         self.use_real_time()
         self.stop_seeded()
         self.install_gh(entries=[(7, "closed")])
-        self.install_http(lambda rec: (200, {}))
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
         acquired = threading.Event()
 
         def holder():
@@ -1133,7 +1150,7 @@ class StopTests(GWCase):
         self.use_real_time()
         self.stop_seeded(states=(("7", "closed"),))
         self.install_gh(entries=[(7, "closed")])
-        self.install_http(lambda rec: (200, {}))
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
         acquired = threading.Event()
 
         def inflight():
@@ -1205,9 +1222,9 @@ class ServeTests(GWCase):
                     held.append("free")
             except ww.LockBusy:
                 held.append("busy")
-            return (200, {"batch_id": "b1",
-                          "events": [sample_event(number=7)],
-                          "through_seq": 9})
+            payload = batch_payload("b1", [sample_event(number=7)])
+            payload["through_seq"] = 9
+            return (200, payload)
 
         fake = self.install_http(fn)
         self.assertEqual(self._step(), "consumed")
@@ -1234,9 +1251,10 @@ class ServeTests(GWCase):
         self.assertEqual(self._step(), "error")
         runtime = self.runtime()
         error = runtime["last_error"]
-        self.assertIn("[redacted]", error["message"])
-        self.assertNotIn(TOKEN_VALUE, error["message"])   # 令牌必须打码
-        self.assertIn("服务异常", error["message"])
+        # 错误输出脱敏：固定文案 + 状态码，不含服务端正文（可能含令牌）
+        self.assertNotIn("t error", error["message"])
+        self.assertNotIn(TOKEN_VALUE, error["message"])   # 令牌绝不出现在日志
+        self.assertIn("HTTP 500", error["message"])
         self.assertNotIn(TOKEN_VALUE, json.dumps(self.webhook_state()))
         self.assertNotIn(TOKEN_VALUE, json.dumps(self.runtime()))
         self.assertEqual(runtime["failures"], 1)
@@ -1272,7 +1290,7 @@ class ServeTests(GWCase):
     def test_serve_loop_sleep_hook_ends_by_desired(self):
         self.seeded_control()
         self.init_consumer()
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         sleeps = []
 
         def on_sleep(seconds):
@@ -1298,7 +1316,7 @@ class ServeTests(GWCase):
         self.heartbeat()
         self.init_consumer()
         self.install_gh(entries=[(7, "open")])
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         self.assertEqual(self._step(), "idle")
         self.assertGreaterEqual(
             len([c for c in self.gh_calls if "labels=" in c]), 1)
@@ -1330,7 +1348,7 @@ class ServeTests(GWCase):
             return {"id": 1001}
 
         self.patch(tw, "_run_gh", fake)
-        fake_http = self.install_http(lambda rec: (200, {}))
+        fake_http = self.install_http(lambda rec: (200, batch_payload(None, [])))
         control = self.control()                    # 触发周期刷新（ts 过期）
         control["scope_check"]["ts"] = self.clock.t - 400
         tw._save_control(self.sdir, control)
@@ -1368,7 +1386,7 @@ class PauseTests(GWCase):
         self.seeded_control()
         self.init_consumer()
         self.install_gh(entries=[(7, "open")])
-        self.install_http(lambda rec: (200, {}))
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
         FakeTaskService.state["registered"] = True
         self.write_webhook_state(pending={"batch_id": "b7", "events": []})
         rc, out, _ = self.run_cli(["pause", "--reason", "用户授权暂停窗口",
@@ -1443,7 +1461,7 @@ class LockAndRollbackTests(GWCase):
     def test_stop_lock_busy_budget_refusal_rolls_back_running(self):
         self.stop_seeded()
         self.install_gh(entries=[(7, "closed")])
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         self.patch(ww, "_state_lock",
                    lambda _dir: _StubLock([ww.LockBusy("占用")] * 99))
         self.patch(tw, "STOP_BUDGET_SECONDS", 1)
@@ -1478,7 +1496,7 @@ class LockAndRollbackTests(GWCase):
         self.seeded_control()
         self.init_consumer()
         self.install_gh(entries=[(7, "open")])
-        self.install_http(lambda rec: (200, {}))
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
         FakeTaskService.state["registered"] = True
         self.write_webhook_state(pending={"batch_id": "b7", "events": []})
         # 第一次 pause：paused 已落盘，但 remove 平台失败
@@ -1524,7 +1542,7 @@ class LockAndRollbackTests(GWCase):
             "issues": [{"number": 7, "state": "open"}]})
         self.heartbeat()
         self.install_gh(entries=[(7, "open")])
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         self.patch(ww, "_lock_file",
                    lambda *a, **k: (_ for _ in ()).throw(
                        ww.LockBusy("control lock busy")))
@@ -1546,7 +1564,7 @@ class LockAndRollbackTests(GWCase):
     def test_stop_keyboard_interrupt_after_quiescing_write_rolls_back_running(self):
         self.stop_seeded()
         self.install_gh(entries=[(7, "closed")])
-        fake = self.install_http(lambda rec: (200, {}))
+        fake = self.install_http(lambda rec: (200, batch_payload(None, [])))
         FakeTaskService.state["registered"] = True
         self._interrupt_on_quiescing_write()
         rc, _, err = self.run_cli(["stop", "--state-dir", self.sdir])
@@ -1582,6 +1600,150 @@ class LockAndRollbackTests(GWCase):
 
 # ---------------------------------------------------------------- CLI 形式
 
+class CredentialTests(GWCase):
+    """凭据接口：缺省默认个人凭据路径，可 --credentials-file 覆盖；
+    旧 --token-file/原生令牌一律拒绝并给迁移指引。"""
+
+    def start_argv(self, cred="default", **over):
+        argv = ["--state-dir", self.sdir, "start",
+                "--repo", self.binding["repo"],
+                "--repository-id", self.binding["repository_id"],
+                "--label", self.binding["task_label"],
+                "--subscription-key", self.binding["subscription_key"],
+                "--watch-url", self.binding["watch_url"],
+                "--gh-path", self.gh_path]
+        if cred == "default":
+            pass  # 不显式指定凭据文件：走默认路径
+        elif cred is not None:
+            argv += ["--credentials-file", cred]
+        for key, value in over.items():
+            argv += ["--" + key.replace("_", "-"), str(value)]
+        return argv
+
+    def default_cred_root(self):
+        root = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="twcred_")))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        self.patch(ww, "_credentials_root", lambda: root)
+        return root
+
+    def test_missing_credentials_names_the_fix(self):
+        # 全新安装：默认凭据路径无文件、未显式确认信任 → 指引先 login 或
+        # 显式 --trust-server；不落任何状态、不调用 gh/签发
+        self.default_cred_root()
+        self.install_gh(entries=[(7, "open")])
+        rc, _, err = self.run_cli(self.start_argv())
+        self.assertNotEqual(rc, 0)
+        self.assertIn("--trust-server", err)
+        self.assertIn("login", err)
+        self.assertNotIn("Traceback", err)
+        self.assertIsNone(self.control().get("binding"))
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+
+    def test_start_first_auto_claim_solidifies_default_path(self):
+        """首次 start 自动申领：默认路径固化进绑定并私有落盘（含 owner）。"""
+        root = self.default_cred_root()
+        self.install_gh(entries=[(7, "open")])
+        fake = self.install_http(lambda rec: (200, {
+            "message_token": SRV_TOKEN, "owner": OWNER}
+            if rec.path == "/v1/auth/token" else consumer_payload()))
+        self.patch(ww, "_gh_token", lambda: "gh-token")
+        rc, out, err = self.run_cli(
+            self.start_argv(trust_server="https://fake.invalid"))
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(SRV_TOKEN, out + err)
+        self.assertNotIn("gh-token", out + err)
+        # 默认路径（按 URL 哈希）已固化进绑定
+        expected = ww.default_credentials_file("https://fake.invalid")
+        self.assertEqual(self.control()["binding"]["credentials_file"], expected)
+        self.assertEqual(self.control()["binding"]["owner_github_user_id"], "100")
+        # 凭据已私有保存（默认目录 0700，文件 0600——显式传入默认绝对路径
+        # 时也必须走 _prepare_credential_root 收紧，不得 0755 创建）
+        self.assertTrue(os.path.exists(expected))
+        if os.name != "nt":
+            self.assertEqual(os.stat(expected).st_mode & 0o777, 0o600)
+            self.assertEqual(os.stat(root).st_mode & 0o777, 0o700)
+        # consumer 请求使用新签发 Token
+        posts = [r for r in fake.requests if r.method == "POST"
+                 and r.path == "/v1/consumers"]
+        self.assertEqual(posts[0].headers.get("authorization"),
+                         "Bearer " + SRV_TOKEN)
+
+    def test_start_first_claim_trust_mismatch_refused(self):
+        self.default_cred_root()
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(
+            self.start_argv(trust_server="https://other.invalid"))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("--trust-server", err)
+        self.assertIsNone(self.control().get("binding"))
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+
+    def test_credentials_file_missing_without_trust_reports_login(self):
+        # 显式 --credentials-file 指向不存在的文件：缺省只读凭据不存在 →
+        # 进入首次申领 → 需要显式 trust；不降级为已监听
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(
+            self.start_argv(cred=os.path.join(self.sdir, "no-such-cred.json")))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("--trust-server", err)
+        self.assertNotIn("Traceback", err)
+        self.assertIsNone(self.control().get("binding"))
+
+    def test_credentials_file_corrupt_rejected_no_reissue(self):
+        bad = os.path.join(self.sdir, "bad-cred.json")
+        self.install_gh(entries=[(7, "open")])
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write("{broken")
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(self.start_argv(cred=bad))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("凭据文件", err)
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+        self.assertIsNone(self.control().get("binding"))
+
+    def test_credentials_file_without_owner_rejected(self):
+        bad = os.path.join(self.sdir, "no-owner.json")
+        with open(bad, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 1, "watch_url": "https://fake.invalid",
+                       "message_token": SRV_TOKEN}, f)
+        self.install_gh(entries=[(7, "open")])
+        os.chmod(bad, 0o600)
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(self.start_argv(cred=bad))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("owner", err)
+        self.assertIsNone(self.control().get("binding"))
+
+    def test_credentials_file_must_be_readable_file(self):
+        self.install_gh(entries=[(7, "open")])
+        rc, _, err = self.run_cli(self.start_argv(cred=self.sdir))  # 目录
+        self.assertNotEqual(rc, 0)
+        self.assertIn("凭据文件", err)
+        self.assertNotIn("Traceback", err)
+        self.assertIsNone(self.control().get("binding"))
+
+    def test_group_readable_credentials_refused_posix(self):
+        # 修复回归：Windows/非 POSIX 权限语义必须在产生任何副作用前跳过
+        self.install_gh(entries=[(7, "open")])
+        if os.name == "nt":
+            self.skipTest("POSIX 权限位在 Windows 不生效")
+        os.chmod(self.cred_file, 0o644)
+        rc, _, err = self.run_cli(self.start_argv(cred=self.cred_file))
+        self.assertEqual(rc, 1)
+        self.assertIn("chmod 600", err)
+        self.assertIsNone(self.control().get("binding"))
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+
+    def test_failed_start_writes_no_state(self):
+        self.default_cred_root()
+        self.install_gh(entries=[(7, "open")])
+        self.run_cli(self.start_argv())
+        self.assertEqual(tw._load_control(self.sdir), {})
+        self.assertFalse(os.path.exists(os.path.join(self.sdir, "task-watch.json")))
+
+
 class CliTests(GWCase):
 
     def test_cli_state_dir_and_label_aliases(self):
@@ -1594,18 +1756,411 @@ class CliTests(GWCase):
         self.assertEqual(self.control()["binding"]["task_label"], "task-t1")
         # --state-dir 放子命令后 + --label 别名
         dir2 = os.path.join(self.sdir, "second")
+        os.makedirs(dir2, mode=0o700, exist_ok=True)
         rc, _, err = self.run_cli(
             ["start", "--state-dir", dir2, "--repo", self.binding["repo"],
              "--repository-id", self.binding["repository_id"],
              "--label", self.binding["task_label"],
              "--subscription-key", "run-1",
-             "--token-file", self.token_file,
+             "--credentials-file", self.cred_file,
              "--watch-url", self.binding["watch_url"],
              "--gh-path", self.gh_path])
         self.assertEqual(rc, 0, err)
         control2 = tw._load_control(dir2)
         self.assertEqual(control2["binding"]["task_label"], "task-t1")
         self.assertEqual(control2["phase"], "ready")
+
+
+# ---------------------------------------------------------------- 个人凭据后台路径
+
+class CredentialBackendTests(GWCase):
+    """后台 serve 只读已保存个人凭据；401/403 持久化 auth blocked。"""
+
+    def _seed_running(self):
+        self.seeded_control()
+        self.heartbeat()
+        self.init_consumer()
+
+    def test_serve_missing_credentials_blocked_not_listening(self):
+        self._seed_running()
+        os.unlink(self.cred_file)
+        fake = self.install_http(lambda rec: (404, ERR_BODY))
+        self.assertEqual(tw.serve_step(self.sdir), "error")
+        runtime = self.runtime()
+        self.assertIn("没有已保存的个人凭据", runtime["blocked_note"])
+        self.assertNotIn(SRV_TOKEN, json.dumps(runtime))
+        # 缺凭据不降级为已监听
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        _, out, _ = self.run_cli(["status", "--state-dir", self.sdir])
+        self.assertEqual(json.loads(out)["state"], "blocked")
+        self.assertNotIn(SRV_TOKEN, out)
+        self.assertEqual(fake.requests, [])   # 缺凭据不发起任何网络请求
+        # 恢复：凭据补回后下一轮自动恢复采集
+        ww.save_credentials_file(self.cred_file, "https://fake.invalid",
+                                 "recovered-token", OWNER)
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
+        FakeTaskService.state["running"] = True
+        self.clock.t += 60  # 跨过普通错误退避
+        self.assertEqual(tw.serve_step(self.sdir), "idle")
+        self.assertIsNone(self.runtime().get("blocked_note"))
+
+    def test_serve_auth_401_persists_blocked_and_stops_retry(self):
+        self._seed_running()
+        fake = self.install_http(lambda rec: (401, ERR_BODY))
+        self.assertEqual(tw.serve_step(self.sdir), "blocked")
+        runtime = self.runtime()
+        self.assertTrue(runtime["auth_blocked"])
+        self.assertIn("401", runtime["blocked_note"])
+        self.assertIn("login", runtime["blocked_note"])
+        self.assertNotIn(SRV_TOKEN, json.dumps(runtime))
+        # 持久状态而非超长定时器：retry_at=0，由 auth_blocked 承担永久阻断
+        self.assertEqual(runtime.get("retry_at"), 0)
+        reqs = len(fake.requests)
+        self.clock.t += 1000
+        self.assertEqual(tw.serve_step(self.sdir), "blocked")  # 跨时钟跳跃仍阻断
+        self.assertEqual(tw.serve_step(self.sdir), "blocked")
+        self.assertEqual(len(fake.requests), reqs)  # 期间不再轮询
+        # status 呈现 auth blocked（而不是已监听）
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        _, out, _ = self.run_cli(["status", "--state-dir", self.sdir])
+        data = json.loads(out)
+        self.assertEqual(data["state"], "blocked")
+        self.assertTrue(data["auth_blocked"])
+        self.assertIn("login", data["detail"])
+        # 恢复只能由前台 login + start（新代次）触发；仅修好凭据不自动恢复
+        self.install_http(lambda rec: (200, batch_payload(None, [])))
+        ww.save_credentials_file(self.cred_file, "https://fake.invalid",
+                                 "new-token", OWNER)
+        FakeTaskService.state["running"] = True
+        FakeTaskService.state["registered"] = True
+        self.assertEqual(tw.serve_step(self.sdir), "blocked")  # 仍阻断，无 start 不恢复
+        self.assertEqual(len(fake.requests), reqs)
+
+    def test_serve_auth_403_same_blocked_path_never_gh(self):
+        self._seed_running()
+        fake = self.install_http(lambda rec: (403, ERR_BODY))
+        self.assertEqual(tw.serve_step(self.sdir), "blocked")
+        self.assertTrue(self.runtime()["auth_blocked"])
+        self.assertIn("403", self.runtime()["blocked_note"])
+        # 后台不重新签发：gh 子进程从未被调用（setUp 已禁止）
+
+    def test_serve_ignores_message_token_env_uses_saved_file(self):
+        """后台绝不读 MESSAGE_TOKEN 环境变量（backend no env）。"""
+        os.environ["MESSAGE_TOKEN"] = "leak-attempt-token"
+        self._seed_running()
+        fake = self.install_http(
+            lambda rec: (200, batch_payload("b1", [sample_event(number=7)])))
+        self.assertEqual(tw.serve_step(self.sdir), "consumed")
+        get = [r for r in fake.requests
+               if r.path.split("?")[0].endswith("/events")][0]
+        self.assertEqual(get.headers.get("authorization"),
+                         "Bearer " + SRV_TOKEN)
+        self.assertNotIn("leak-attempt-token",
+                         json.dumps(self.runtime()) +
+                         json.dumps(self.webhook_state()))
+
+    def test_serve_events_owner_mismatch_not_saved(self):
+        """events 响应 owner 与状态/绑定不符：拒绝落盘，不丢已有 pending 语义。"""
+        self._seed_running()
+        bad = {**OWNER, "github_user_id": "200", "github_login": "eve"}
+        payload = batch_payload("b1", [sample_event(number=7)], owner=bad)
+        self.install_http(lambda rec: (200, payload))
+        self.assertEqual(tw.serve_step(self.sdir), "error")
+        self.assertIsNone(self.webhook_state().get("pending"))
+        self.assertIn("owner", self.runtime()["last_error"]["message"])
+
+    def test_ack_uses_saved_credential_and_owner_protocol(self):
+        self._seed_running()
+        self.write_webhook_state(
+            pending={"batch_id": "b1", "events": [sample_event(number=7)],
+                     "through_seq": 3})
+        fake = self.install_http(
+            lambda rec: (200, {"ok": True, "batch_id": "b1", "owner": OWNER}))
+        rc, out, err = self.run_cli(
+            ["ack", "--batch-id", "b1", "--state-dir", self.sdir])
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(self.webhook_state()["pending"])
+        self.assertEqual(json.loads(fake.requests[0].body),
+                         {"batch_id": "b1"})
+        self.assertEqual(fake.requests[0].headers.get("authorization"),
+                         "Bearer " + SRV_TOKEN)
+
+    def test_ack_owner_mismatch_or_missing_creds_kept(self):
+        self._seed_running()
+        self.write_webhook_state(
+            pending={"batch_id": "b1", "events": [sample_event(number=7)],
+                     "through_seq": 3})
+        # 响应 owner 不符：pending 保留
+        bad = {**OWNER, "github_user_id": "200", "github_login": "eve"}
+        self.install_http(lambda rec: (200, {"ok": True, "batch_id": "b1",
+                                             "owner": bad}))
+        rc, _, err = self.run_cli(
+            ["ack", "--batch-id", "b1", "--state-dir", self.sdir])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("owner", err)
+        self.assertEqual(self.webhook_state()["pending"]["batch_id"], "b1")
+        # 凭据缺失：拒绝（只读，不签发），pending 保留
+        os.unlink(self.cred_file)
+        fake = self.install_http(lambda rec: (200, {"ok": True,
+                                                    "owner": OWNER}))
+        rc, _, err = self.run_cli(
+            ["ack", "--batch-id", "b1", "--state-dir", self.sdir])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("没有已保存的个人凭据", err)
+        self.assertEqual(self.webhook_state()["pending"]["batch_id"], "b1")
+        self.assertEqual(fake.requests, [])
+
+
+class LegacyMigrationTests(GWCase):
+    """旧共享 Token / 旧状态格式：拒绝复用并给迁移指引，pending 不丢。"""
+
+    def test_start_old_token_file_binding_refused_pending_kept(self):
+        old_binding = {
+            "repo": "octo/hello", "repository_id": "1001",
+            "task_label": "task-t1", "subscription_key": "run-1",
+            "watch_url": "https://fake.invalid",
+            "token_file": self.cred_path, "gh_path": self.gh_path,
+            "start": "now"}
+        self.write_control(**{k: v for k, v in {
+            "binding": old_binding, "desired": "running",
+            "phase": "starting", "generation": 1,
+            "scope_check": {"version": 1, "ts": self.clock.t,
+                            "issues": [{"number": 7, "state": "open"}]},
+        }.items()})
+        self.write_webhook_state(
+            pending={"batch_id": "bZ", "events": [sample_event(number=7)],
+                     "through_seq": 2})
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(["start", "--state-dir", self.sdir])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("token-file", err)
+        self.assertIn("login", err)
+        self.assertNotIn("Traceback", err)
+        # pending 不丢：仍在 webhook 状态里
+        self.assertEqual(self.webhook_state()["pending"]["batch_id"], "bZ")
+
+    def test_start_legacy_consumer_without_schema_refused_pending_kept(self):
+        self.seeded_control()
+        self.write_webhook_state(
+            subscription_key="run-1", repository_id="1001", start="now",
+            watch_url="https://fake.invalid", consumer_id="c-old",
+            initial_boundary_seq=5, cursor_seq=5,
+            pending={"batch_id": "bZ", "events": [], "through_seq": 2})
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(["start", "--state-dir", self.sdir])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("schema_version", err)
+        self.assertIn("重新 init", err)
+        self.assertEqual(self.webhook_state()["pending"]["batch_id"], "bZ")
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+
+    def test_start_old_binding_owner_change_refused(self):
+        self.seeded_control(binding=dict(
+            self.binding, owner_github_user_id="200"))
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(["start", "--state-dir", self.sdir])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("owner", err)
+        self.assertIn("新状态目录", err)
+        self.assertEqual(self.control()["desired"], "running")  # 未落新绑定
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+
+    def test_start_state_owner_change_refused(self):
+        self.seeded_control()
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        self.init_consumer()
+        self.write_webhook_state(owner_github_user_id="200")
+        rc, _, err = self.run_cli(["start", "--state-dir", self.sdir])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("owner", err)
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+
+
+
+
+class MessageTokenRefusalTests(GWCase):
+    """前台 start 检测到 MESSAGE_TOKEN 即拒绝并给升级提示（不静默采用）。"""
+
+    def test_start_message_token_env_refused_with_upgrade_hint(self):
+        os.environ["MESSAGE_TOKEN"] = "shared-legacy-token"
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(self.start_argv())
+        self.assertEqual(rc, 1)
+        self.assertIn("MESSAGE_TOKEN", err)
+        self.assertIn("停用", err)
+        self.assertIn("login", err)
+        self.assertIsNone(self.control().get("binding"))
+        self.assertEqual(FakeTaskService.state["ensure_calls"], 0)
+
+    def test_serve_keeps_working_with_env_token_present(self):
+        # 后台：忽略环境变量，继续用已保存个人凭据（不拒、不采用）
+        os.environ["MESSAGE_TOKEN"] = "shared-legacy-token"
+        self.seeded_control()
+        self.heartbeat()
+        self.init_consumer()
+        fake = self.install_http(lambda rec: (200, batch_payload("b1", [])))
+        self.assertEqual(tw.serve_step(self.sdir), "consumed")
+        self.assertEqual(len(fake.requests), 1)
+
+
+# ---------------------------------------------------------------- 竞态/预检/优先级回归
+
+class StartRaceAndPriorityTests(GWCase):
+
+    def write_runtime_file(self, runtime):
+        tw._save_runtime(self.sdir, runtime)
+
+    def test_unfinished_state_owner_conflict_refused_before_control_write(self):
+        """CLI 先 init 失败留下未完成订阅（无 consumer，owner A）；
+        随后用 owner B 的凭据 start：必须在写 control 之前拒绝，目录不锁死。"""
+        # CLI init 只登记参数并写 owner=200（服务 500 失败 → consumer 为空）
+        self.write_webhook_state(
+            schema_version=1, subscription_key="run-1", repository_id="1001",
+            start="now", watch_url="https://fake.invalid", consumer_id=None,
+            initial_boundary_seq=None, cursor_seq=None,
+            owner_github_user_id="200", pending=None)
+        # task_watch 绑定凭据 owner=100
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload()))
+        rc, _, err = self.run_cli(self.start_argv())
+        self.assertEqual(rc, 1)
+        self.assertIn("登记 owner(200)", err)
+        self.assertIn("不一致", err)
+        self.assertNotIn("Traceback", err)
+        self.assertIsNone(self.control().get("binding"))  # 未写绑定
+        # webhook 状态未被改动（不丢参数/owner/pending 底座）
+        self.assertEqual(self.webhook_state()["owner_github_user_id"], "200")
+
+    def test_early_start_refuses_replaced_credential_owner(self):
+        """已在运行时重跑 start：心跳不能掩盖被替换的个人凭据。"""
+        self.seeded_control()
+        self.heartbeat()
+        self.init_consumer()
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        # 凭据被替换为另一账号
+        ww.save_credentials_file(self.cred_file, "https://fake.invalid",
+                                 "other-token",
+                                 {"github_user_id": "200",
+                                  "github_login": "eve"})
+        self.install_gh(entries=[(7, "open")])
+        self.install_http(lambda rec: (200, consumer_payload(cid="c-2")))
+        rc, _, err = self.run_cli(self.start_argv())
+        self.assertNotEqual(rc, 0)
+        self.assertIn("owner", err)
+        # 未写新绑定（仍是原 ready 绑定，未被早退流程改动）
+        self.assertEqual(self.control()["phase"], "ready")
+
+    def test_early_start_refuses_missing_credentials(self):
+        """已运行的 start 重跑但绑定凭据文件缺失：直接认证错误，不假成功。"""
+        self.seeded_control()
+        self.heartbeat()
+        self.init_consumer()
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        os.unlink(self.cred_file)
+        rc, _, err = self.run_cli(self.start_argv())
+        self.assertNotEqual(rc, 0)
+        self.assertIn("没有已保存的个人凭据", err)
+        self.assertIn("login", err)
+        self.assertEqual(self.control()["phase"], "ready")  # 绑定未被改动
+
+    def test_wait_ready_fails_on_auth_blocked(self):
+        """_wait_ready 遇 auth blocked：立即失败并透出原因，不输出 ready。"""
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        self.write_runtime_file(
+            {"pid": 1, "generation": 1, "heartbeat_ts": self.clock.t,
+             "desired_seen": "starting", "quiesced": False,
+             "auth_blocked": True,
+             "blocked_note": "认证失败(401/403)：请 login 后 start"})
+        svc = tw.TaskService(self.sdir)
+        managed = {"platform": "fake", "name": "x", "state_dir": self.sdir}
+        with self.assertRaisesRegex(tw.TaskWatchError, "认证失败"):
+            tw._wait_ready(self.sdir, svc, managed, 1)
+        # 非阻断心跳 → 正常就绪
+        self.write_runtime_file({"pid": 1, "generation": 1,
+                                 "heartbeat_ts": self.clock.t,
+                                 "desired_seen": "running",
+                                 "quiesced": False})
+        tw._wait_ready(self.sdir, svc, managed, 1)
+
+    def test_wait_ready_ignores_stale_generation_auth_blocked(self):
+        """上一代 401 残留不得把新的恢复 start 判失败；当前代次立即失败。"""
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        svc = tw.TaskService(self.sdir)
+        managed = {"platform": "fake", "name": "x", "state_dir": self.sdir}
+        # 场景1：旧代次(gen1) auth_blocked 残留；start(gen2) 后新代次心跳
+        # 到达（模拟异步真实后台），_wait_ready 正常就绪，不误报
+        self.write_runtime_file(
+            {"pid": 1, "generation": 1, "heartbeat_ts": self.clock.t,
+             "desired_seen": "starting", "quiesced": False,
+             "auth_blocked": True, "blocked_note": "旧代次 401 残留"})
+
+        def write_new_gen_on_first_sleep(seconds):
+            self.clock.on_sleep = None  # 只在首次 sleep 时写入（异步时点）
+            tw._save_runtime(self.sdir, {
+                "pid": 2, "generation": 2, "heartbeat_ts": self.clock.t,
+                "desired_seen": "running", "quiesced": False})
+        self.clock.on_sleep = write_new_gen_on_first_sleep
+        tw._wait_ready(self.sdir, svc, managed, 2)  # 不抛认证失败
+        # 场景2：当前代次(gen2) auth_blocked → 立即失败并透出原因
+        self.write_runtime_file(
+            {"pid": 2, "generation": 2, "heartbeat_ts": self.clock.t,
+             "desired_seen": "running", "quiesced": False,
+             "auth_blocked": True,
+             "blocked_note": "认证失败(401/403)：当前代次"})
+        with self.assertRaisesRegex(tw.TaskWatchError, "401"):
+            tw._wait_ready(self.sdir, svc, managed, 2)
+
+    def test_status_auth_blocked_not_shadowed_by_reconcile_required(self):
+        """auth blocked + reconcile required：status 优先显示认证原因。"""
+        self.seeded_control(reconcile={"version": 9, "ts": self.clock.t})
+        self.init_consumer()
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        self.heartbeat()
+        runtime = self.runtime()
+        runtime["auth_blocked"] = True
+        runtime["blocked_note"] = "认证失败(401/403)：请 login"
+        self.write_runtime_file(runtime)
+        _, out, _ = self.run_cli(["status", "--state-dir", self.sdir])
+        data = json.loads(out)
+        self.assertEqual(data["state"], "blocked")
+        self.assertIn("认证失败(401/403)", data["detail"])
+        self.assertNotIn("reconcile --version", data["detail"])
+
+    def test_bridge_new_auth_error_precedes_reconcile(self):
+        """bridge：新认证错误（版本>after）优先于 reconcile 提示。"""
+        self.seeded_control(reconcile={"version": 9, "ts": self.clock.t})
+        self.init_consumer()
+        FakeTaskService.state["registered"] = True
+        FakeTaskService.state["running"] = True
+        self.heartbeat()
+        runtime = self.runtime()
+        assert runtime.get("notice_version") is None
+        notice_version = 42
+        self.write_runtime_file(
+            {**runtime, "notice_version": notice_version,
+             "last_error": {"version": notice_version,
+                            "message": "认证失败(401/403)：请 login"},
+             "auth_blocked": True})
+        # 采集心跳仍新鲜：失联提示不触发
+        notice = tw.bridge_once(self.sdir,
+                                after=notice_version - 1)
+        self.assertEqual(notice["kind"], "error")
+        self.assertIn("401", notice["message"])
+        # after 增长后不再重复该错误；reconcile 提示不被旧错误顶替
+        notice = tw.bridge_once(self.sdir, after=notice_version)
+        self.assertEqual((notice or {}).get("kind"), "reconcile")
 
 
 if __name__ == "__main__":

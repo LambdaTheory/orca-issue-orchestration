@@ -2,6 +2,8 @@
 
 开发 worker 按任务说明创建或更新 PR 时执行本节；协调者交付复核使用同一标准；独立评审只读，不修改分支或正文。
 
+> 平台：本文件命令示例按 macOS / Linux（bash / zsh）书写；Windows 用等价 PowerShell 执行——保存 PR 正文用单引号 here-string `@' … '@`（见下文），读取文件内容用 `Get-Content -Raw -Encoding UTF8`。
+
 本规范只约束 PR 的标题、正文、Issue 关联和证据呈现。分支隔离、worktree、依赖顺序、派发授权、评审与合并属于编排主线和项目配置，不在这里重复；PR 交付后是否合并、何时关票也按项目配置执行。
 
 ## 参数来源

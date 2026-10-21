@@ -2,6 +2,8 @@
 
 从 SKILL.md 执行主线进入。守护解决一个具体问题：协调者或 worker 卡在**权限确认弹窗**上，整条编排停下来等人。它不改变编排协议，不代替用户做需求决定，也不重派任务。
 
+> 平台：本文件启动示例为 macOS / Linux（bash / zsh）；Windows 版本见 `windows/skills/orca-issue-orchestration/references/guard.md` 的 PowerShell 示例。
+
 ## 为什么不是"派一个 Agent 去点批准"
 
 权限弹窗没有跨进程批准接口。第二个 Agent 无法替第一个会话点"允许"。真实可用的只有两条通路：

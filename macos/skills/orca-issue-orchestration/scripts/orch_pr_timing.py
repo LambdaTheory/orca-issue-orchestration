@@ -23,7 +23,7 @@ def load(repo, run):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        sys.exit("state.json not found: %s" % path)
+        sys.exit("%s 不存在：这个 Run 还没初始化，先执行 init" % path)
     except ValueError as exc:
         sys.exit("state.json invalid: %s" % exc)
 
