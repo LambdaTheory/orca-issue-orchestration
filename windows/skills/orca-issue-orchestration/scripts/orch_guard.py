@@ -63,7 +63,8 @@ def orca_json(argv, timeout=30):
     """Same envelope handling as orch_wait: never raise, always return a dict."""
     try:
         proc = subprocess.run([ORCA, *argv], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, encoding="utf-8", timeout=timeout)
+                              text=True, encoding="utf-8", timeout=timeout,
+                              **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": {"code": "cli_timeout", "message": f"orca {' '.join(argv[:2])} timed out"}}
     except OSError as exc:
