@@ -13,7 +13,7 @@ guard terminal's heartbeat went stale) and guard_hold (a prompt is parked for a
 human). Both are observations: the coordinator decides, the guard never decides
 for it.
 """
-import argparse, json, math, subprocess, sys, time
+import argparse, json, math, os, subprocess, sys, time
 from datetime import datetime
 from pathlib import Path
 
@@ -98,7 +98,8 @@ def run_loop(check, initial_ack=None, health=None, check_now=None):
 def orca_json(cmd, timeout):
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, encoding="utf-8", timeout=timeout)
+                              text=True, encoding="utf-8", timeout=timeout,
+                              **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": {"code": "cli_timeout",
                 "message": "CLI request timed out; reconcile before retrying any ACK"}}
