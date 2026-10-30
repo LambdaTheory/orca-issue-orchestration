@@ -25,6 +25,20 @@ function PT { & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_pr_timing.py') -
 
 使用原生 PowerShell 工具执行下列命令，不从 bash 包装调用 PowerShell；只有旧 watcher 回退需要真正的 Git Bash，不选 WSL 的同名 `bash.exe`。
 
+## 只读模型与额度查询
+
+先按[模型调度](models.md)核实接入及能力。优先用当前已配置的 MCP；以下是无原生连接时的标准库查询入口，只读、不派发、不改全局配置。变量来自用户已信任的本机配置，密钥只从受保护文件或已有环境变量读取，不在命令里写真实值。
+
+```powershell
+$env:OMC_MCP_ENDPOINT = '<用户已确认的HTTPS MCP端点>'
+$env:OMC_MCP_KEY_FILE = '<本机受保护的只读密钥文件>'
+& $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_models.py')
+# 筛选能力/执行器支持后，把当前任务最多 20 个候选放在同批获取可比排名
+& $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_models.py') --models '<OMC模型名A>' '<OMC模型名B>'
+```
+
+若已安全配置 `OMC_MCP_KEY` 则无需设置密钥文件；不要同时留下误指向旧文件的 `OMC_MCP_KEY_FILE`。输出只含净化后的目录能力及额度摘要，失败返回非零；不能只看 HTTP 200 或忽略脚本退出码。保存摘要仅用本 Run 的 Git 忽略目录，不保存密钥。默认按目录全部模型分成每组最多 20 个查询，`advice_batches` 各自排名不可跨批比较，最终候选应再单批查询。该工具不自动选模型，选择、预约、回执核对由协调者完成。
+
 ## 启动一次编排
 
 先查持久化记录和 Orca 是否已有本任务 Run/Dispatch；恢复现有尝试，不重复建 Run。初始化通过、票据存在、派发已授权后，由协调者立即执行下列 Orca 命令启动可执行票。不能只输出待办清单、开普通子代理或说“下一步可派发”就结束。
@@ -230,13 +244,13 @@ orca orchestration run-create --objective '<项目> 实现' --json
 $RUN_ID = '<上一步真实返回的 Run ID>'
 S init --objective '<项目> 实现' --max-parallel 1 --reviewers '<评审Agent>'
 $spec = Get-Content -Raw -Encoding UTF8 '<开发任务说明绝对路径>'
-orca orchestration worker-start --spec $spec --task-title 'T<n> 标题 (#n)' --worktree new-top-level --repo '<实际 repo 选择器>' --name 'issue-<n>-<slug>' --base-branch '<目标分支>' --agent '<开发Agent>' --run $RUN_ID --json
+orca orchestration worker-start --spec $spec --task-title 'T<n> 标题 (#n)' --worktree new-top-level --repo '<实际 repo 选择器>' --name 'issue-<n>-<slug>' --base-branch '<目标分支>' --agent '<开发Agent>' --model '<本次开发模型ID>' --run $RUN_ID --json
 $reviewSpec = Get-Content -Raw -Encoding UTF8 '<评审说明绝对路径>'
-orca orchestration worker-start --spec $reviewSpec --worktree 'id:<repoId>::<path>' --agent '<评审Agent>' --run $RUN_ID --json
-# 修改：仅已授权保留且仍可复用时使用开发终端；否则在同 worktree 新派修复 worker（二选一，不复用已释放 handle）
+orca orchestration worker-start --spec $reviewSpec --worktree 'id:<repoId>::<path>' --agent '<评审Agent>' --model '<本次评审模型ID>' --run $RUN_ID --json
+# 修改：仅已授权保留、原模型仍合格且可用时使用开发终端（不能带 --model）；否则在同 worktree 新派修复 worker（二选一，不复用已释放 handle）
 $fixSpec = Get-Content -Raw -Encoding UTF8 '<修复说明绝对路径>'
 orca orchestration worker-start --spec $fixSpec --terminal '<开发者 handle>' --worktree 'id:<repoId>::<path>' --run $RUN_ID --json
-orca orchestration worker-start --spec $fixSpec --agent '<开发Agent>' --worktree 'id:<repoId>::<path>' --run $RUN_ID --json
+orca orchestration worker-start --spec $fixSpec --agent '<开发Agent>' --model '<本次修复模型ID>' --worktree 'id:<repoId>::<path>' --run $RUN_ID --json
 # 等待退出码 0：普通 check JSON 或 kind=health_alert，先区分类型；非零是查询/执行错误。
 # 普通批次处理完用真实 deliveryId 续等；health_alert 没有伪造的 deliveryId。
 # 不要另开 check --wait；原批次未处理完不能 ack。
@@ -263,11 +277,13 @@ orca orchestration worker-release --dispatch '<dispatch>'       # 评审者完�
 
 ### 派发凭据与角色检查
 
-- 首次启动核实实际可用 Agent、配置模型与初始化向导是否就绪；启动后核对回执中的实际 Agent/模型、输入接受与 turnStart，不把终端存在当作已开工。按回执区分 structured session 与 terminal：统一优先用 `worker-show` / `worker-read --source auto`，仅明确为 terminal 且 handle 支持时才使用 terminal 命令；不强行向 structured worker 发送终端按键。
-- **当前任务内有限恢复**：503 / 断流先查看原 Task/Dispatch、持久报告及当前状态；已有完成报告先取回，不因最后一次接口错误重做。仅在当前 Orca 恢复指引允许重试且旧尝试已确认停止/失败后，同一任务最多自动重试 2 次，记录次数，用原 `--task`、`--retry-of` 及回执要求的参数恢复，不用 `--spec` 另建重复任务，不重建整套工作区或重跑已完成评审。等待超时、连接丢失或 `outcome_unknown` 不证明 worker 死亡，先对账；次数耗尽或配置不变的错误只报告阻断，保留进度。退避等待交给工具，不让模型轮询倒计时。
+- **本次模型选择**：每个新开发/评审/修复尝试先按[模型调度](models.md)选合格候选、核对新鲜额度和额度组负载，记录预约，再传该执行器实际支持的精确模型 ID；本节示例的模型占位符必须替换为本轮选择。当前 Orca 不支持该 Agent 的任务级模型参数时报告不支持，不静默去掉参数继承默认，不改全局模型。复用 `--terminal` 只能沿用已验证且仍可用的原模型；换模型新建 Agent，不能混用 `--model`。
+
+- 首次启动核实实际可用 Agent、配置模型与初始化向导是否就绪；启动后核对回执中的实际 Agent、requested_model / effective_model、输入接受与 turnStart，不把终端存在当作已开工。按回执区分 structured session 与 terminal：统一优先用 `worker-show` / `worker-read --source auto`，仅明确为 terminal 且 handle 支持时才使用 terminal 命令；不强行向 structured worker 发送终端按键。
+- **当前任务内有限恢复**：429 / 额度耗尽 / 503 / 断流先查看原 Task/Dispatch、持久报告及当前状态；已有完成报告先取回，不因最后一次接口错误重做。仅在当前 Orca 恢复指引允许重试且旧尝试已确认停止/失败后，同一任务最多自动重试 2 次，记录次数，先刷新模型建议并筛选合格替代（不另开重试预算），用原 `--task`、`--retry-of` 及回执要求的参数恢复，不用 `--spec` 另建重复任务，不重建整套工作区或重跑已完成评审。等待超时、连接丢失或 `outcome_unknown` 不证明 worker 死亡，先对账；次数耗尽或配置不变的错误只报告阻断，保留进度。退避等待交给工具，不让模型轮询倒计时。
 - 工具选错或参数不适用时按明确错误提示改用正确入口，先查帮助，不先要求用户改权限规则；真实权限拒绝不绕过，不把配置错误伪装成临时服务错误重试。
 
-- 每票首次开发、每轮评审/修复都保存实际回执到 Run 目录，记录 Issue、需求确认版本、阶段/轮次、Task ID、Dispatch ID、实际 Agent、worktree、handle（若有）、报告位置及结果。`worker-start --spec` 创建新 Task/Dispatch；修复复用终端不等于复用 Task，禁止覆盖旧轮次记录。`S set` 可记录 `dev_task`、`dev_dispatch`、`dev_receipt` 等当前指针，历史回执另存。
+- 每票首次开发、每轮评审/修复都保存实际回执到 Run 目录，记录 Issue、需求确认版本、阶段/轮次、Task ID、Dispatch ID、实际 Agent、requested_model / effective_model、OMC 名称及选择摘要、worktree、handle（若有）、报告位置及结果。`worker-start --spec` 创建新 Task/Dispatch；修复复用终端不等于复用 Task，禁止覆盖旧轮次记录。`S set` 可记录 `dev_task`、`dev_dispatch`、`dev_receipt` 等当前指针，历史回执另存。
 - 只有权威启动回执确认 ready 且输入已接受才设置 `stage=dev` 并向用户报告“已派发”，同时提供票号、实际 Agent 与 Dispatch；普通子代理 ID、终端打开、写好 spec 都不是派发成功。失败或 `outcome_unknown` 记录真实回执与阻断，读取 `failedStage`、`residualResources` 和 Orca recovery 指引；未知状态先对账，不盲目重派，更不能自己接手实现。
 - 若项目明确选择原生子代理作为唯一独立评审，它仍共用并发额度，不叠加 Orca 评审，也不再派生评审；它不具有 Orca Task/Dispatch，不能发送 Orca `worker_done`。协调者收取结果并记录 `review_head`、报告与完成状态；评审完成不表示实现任务已派发或完成。
 - 收到 worker_done，先核对活跃 Task/Dispatch、outcome 和实际 diff/测试证据，再决定修复、验收或阻断；必须修改项交回 Orca 开发 worker，协调者只复现核验、不亲自修代码。

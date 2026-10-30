@@ -34,7 +34,8 @@
 ```
 
 - 需求澄清默认进入 `wayfinder`，不再设置固定 grilling 访谈入口，也不要求另行输入 `/wayfinder`；已有确认直接复用。`html-plan` 保留为当前讨论的问题页面与答复工具；小任务不强制建 Map，复杂决策按 Map / 决策票逐步推进。
-- 默认串行执行；开发、修复、评审及原生子代理共用模型并发额度，已有项目约定优先。
+- 新的开发、评审、修复尝试默认结合 OMC 只读 MCP 的模型目录与额度建议，先筛任务能力、隐私和执行器支持，再按已知额度组负载选择；不无条件跟随主代理或固定模型。查询工具只读，实际选择与派发由协调者执行，见[模型调度](windows/skills/orca-issue-orchestration/references/models.md)。
+- 默认串行执行；开发、修复、评审及原生子代理共用模型并发额度，负载均衡不自动扩大并发，已有项目约定优先。
 - 空超时和存活心跳由等待脚本处理，不反复唤醒协调模型；脚本默认每轮检查后间隔 60 秒只读检查 worker，done/idle 未结算持续 120 秒或无可见进展 900 秒时发出核查提醒，不自动判死或重派。
 - 状态默认读取当前摘要，详细记录按需读取。
 - 默认一次独立评审；复用同 SHA、环境与范围未变的有效测试证据，不默认重复全量测试或 build。
@@ -109,6 +110,8 @@ cp -R macos/skills/. "$DEST/"
 | 变量 | 说明 |
 |---|---|
 | `ORCA_ISSUE_SKILL_DIR` | 可选：`orca-issue-orchestration/SKILL.md` 所在目录的绝对路径；不是整个套件根目录 |
+| `OMC_MCP_ENDPOINT` | 用户信任的 OMC HTTPS MCP 端点；不在套件内写死部署地址 |
+| `OMC_MCP_KEY` / `OMC_MCP_KEY_FILE` | 安全提供的只读密钥或本机密钥文件；不提交密钥、不传给 worker |
 | `ORCA_ISSUE_PYTHON` | 可选：Python 3 命令名或可执行文件路径；不拼接参数 |
 | `REPO` / `$REPO` | 正在开发的项目本地绝对路径；不是 GitHub `owner/name` |
 | `RUN_ID` / `$RUN_ID` | 当前 Orca Run 的真实 ID，不填占位字符串 |
