@@ -266,9 +266,41 @@ class Flow(unittest.TestCase):
                 if line.startswith("orca orchestration worker-start") and "--terminal" in line:
                     self.assertNotIn("--model", line)
             guide = (skill / "references/models.md").read_text(encoding="utf-8")
-            for phrase in ["不同批次的 rank 不能直接比较", "负载均衡不自动提高并发上限",
+            for phrase in ["不同批次的 rank 不能直接比较", "不增加并发",
                            "requested_model", "effective_model", "unknown", "不修改客户端配置"]:
                 self.assertIn(phrase, guide)
+
+
+    def test_temporary_classification_and_its_removal_are_explicit(self):
+        skill = Path(__file__).resolve().parents[1]
+        guide = (skill / "references/models.md").read_text(encoding="utf-8")
+        for phrase in ["临时任务分类（唯一维护位置）", "GPT-6-Luna 或 GLM-5.3-Flash",
+                       "后端开发、后端正确性独立评审", "Gemini", "DeepSeek",
+                       "接口对接、状态管理", "MCP 提供后，移除本表",
+                       "不保留双轨分类或兼容回退", "两个通用候选不设优先顺序"]:
+            self.assertIn(phrase, guide)
+
+    def test_client_side_grouping_and_replacement_are_out_of_scope(self):
+        skill = Path(__file__).resolve().parents[1]
+        guide = (skill / "references/models.md").read_text(encoding="utf-8")
+        for phrase in ["模型分组与替换由 MCP 侧负责", "不实现同组或跨组替换",
+                       "不在客户端补一套替代方案", "不自定有效期",
+                       "不自行换另一模型", "不预置字段名或自动切换检测"]:
+            self.assertIn(phrase, guide)
+        for old_policy in ["300 秒", "model_group=", "## 选择与负载均衡顺序",
+                           "优先本 Run 最近较少使用", "预约先于启动"]:
+            self.assertNotIn(old_policy, guide)
+
+    def test_temporary_model_names_are_not_copied_into_other_model_docs(self):
+        skill = Path(__file__).resolve().parents[1]
+        for relative in ["SKILL.md", "references/preparation.md", "references/operations.md",
+                         "references/commands.md", "references/recovery.md", "templates/project-config.md",
+                         "templates/dev.md", "templates/review.md", "templates/fix.md"]:
+            text = (skill / relative).read_text(encoding="utf-8")
+            self.assertNotIn("GPT-6-Luna", text, relative)
+            self.assertNotIn("GLM-5.3-Flash", text, relative)
+            self.assertNotIn("默认生成/有效观测年龄均不超过 300 秒", text, relative)
+            self.assertNotIn("model_group=", text, relative)
 
 
 if __name__ == "__main__":

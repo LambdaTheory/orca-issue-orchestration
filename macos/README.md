@@ -12,7 +12,7 @@
 
 需求澄清默认由 `wayfinder` 推进，不再经过固定 grilling 入口，也无需单独输入 `/wayfinder`；`html-plan` 只用于当前讨论的问题页面和答复。已确认需求直接复用，小任务不强制建 Map。
 
-新的开发、评审、修复尝试默认按 OMC 目录、任务能力和额度/组负载选模型；只读查询不自动改变已运行会话或全局模型，不扩大并发。接入由安全环境变量配置，详见 `skills/orca-issue-orchestration/references/models.md` 和命令参考的只读模型查询。
+新任务暂按用户确认的分类核对模型，唯一分类表见 `skills/orca-issue-orchestration/references/models.md`；MCP 提供正式分组后移除临时分类。本端只读 OMC 目录与额度，不实现分组、排序、预约或自动替换，不改运行中的会话或全局模型。接入方式见命令参考。
 
 按需读取参考文档，不把所有历史记录加载到协调者上下文。只按已有授权交付；首次安装不会自动创建 Run、Issue、订阅或开发任务。
 
