@@ -1,5 +1,11 @@
 # 变更记录
 
+## 未发布
+
+- 将 `wayfinder` 接入为默认需求澄清入口，移除固定 grilling 访谈入口约束及“仅显式启用 wayfinder”的限制；同步允许自动调用的技能配置。
+- `html-plan` 保留为 wayfinder 当前讨论的问题页面和答复工具；复用已有确认，小任务不强制建 Map，不追加重复的启动确认。
+- 衔接待新建远端的本地 Map / 决策记录、远端写入授权与任务标签；保留每 session 一张 HITL 票、需求确认及开发派发前置检查。Windows / macOS 同步更新。
+
 ## v1.1.1 — 2026-10-21
 
 - watcher 凭据改为**个人 message token**：首次 `TW start` 在前台用 `gh auth token` 申领当前 GitHub 登录凭据，仅发送到用户**明确信任**的 HTTPS 服务换取个人 token；客户端**自动存储**（返回凭据保存为按服务 URL hash 区分的用户配置 JSON，任务状态只记路径，不写系统任务定义或日志）。401/403 属认证阻断，回到前台登录后再 `start`，不无限重签；后台 serve/wait/ack 只读已保存的消息凭据，不调用 `gh auth token` 换取令牌；范围对账仍使用 GitHub CLI。旧 `MESSAGE_TOKEN` 不再作为凭据来源。

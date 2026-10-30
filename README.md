@@ -28,11 +28,12 @@
 ## 核心流程
 
 ```text
-探查已有事实 → 确认需求 → 创建/复用实现 Issue
+探查已有事实 → wayfinder 澄清与确认需求 → 创建/复用实现 Issue
 → Orca 开发 worker → 一次独立评审 → 必要修复与验证
 → 按授权交付 PR → 记录结果并收口
 ```
 
+- 需求澄清默认进入 `wayfinder`，不再设置固定 grilling 访谈入口，也不要求另行输入 `/wayfinder`；已有确认直接复用。`html-plan` 保留为当前讨论的问题页面与答复工具；小任务不强制建 Map，复杂决策按 Map / 决策票逐步推进。
 - 默认串行执行；开发、修复、评审及原生子代理共用模型并发额度，已有项目约定优先。
 - 空超时和存活心跳由等待脚本处理，不反复唤醒协调模型；脚本默认每轮检查后间隔 60 秒只读检查 worker，done/idle 未结算持续 120 秒或无可见进展 900 秒时发出核查提醒，不自动判死或重派。
 - 状态默认读取当前摘要，详细记录按需读取。
@@ -45,7 +46,7 @@
 | Skill | 用途 |
 |---|---|
 | `orca-issue-orchestration` | 主入口：初始化、需求确认、GitHub Issue、Orca 开发与评审编排 |
-| `html-plan` | 交互式 HTML 方案与中文需求确认 |
+| `html-plan` | wayfinder 内的中文问题页面与答复收集，也可独立制作 HTML 方案 |
 | `implement` | 按已确认的 SPEC / Issue 执行实现 |
 | `code-review` | 独立的 Standards / Spec 双轴评审；编排主流程不默认叠加调用 |
 | `codebase-design` | 模块接口与设计分析 |
@@ -53,7 +54,7 @@
 | `prototype` | 针对具体设计问题制作验证原型 |
 | `research` | 查证资料与技术事实 |
 | `tdd` | 按测试驱动方式实施指定任务 |
-| `wayfinder` | 复杂工作的决策拆解 |
+| `wayfinder` | 默认需求澄清入口；必要时用 Map / 决策票拆解复杂工作 |
 | `setup-matt-pocock-skills` | 准备 tracker、标签及领域文档约定 |
 
 独立的 `code-review` 仍提供双轴评审能力，但编排主流程默认只安排一次独立评审，不因此自动开启更多评审 Agent。
