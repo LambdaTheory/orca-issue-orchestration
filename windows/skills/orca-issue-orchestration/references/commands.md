@@ -25,6 +25,17 @@ function PT { & $PY -X utf8 (Join-Path $SKILL_DIR 'scripts/orch_pr_timing.py') -
 
 使用原生 PowerShell 工具执行下列命令，不从 bash 包装调用 PowerShell；只有旧 watcher 回退需要真正的 Git Bash，不选 WSL 的同名 `bash.exe`。
 
+## 需求页面截图自查（Align Requirements）
+
+按[需求衔接](requirements.md)先核对本次页面/PRD 版本，读取同级 `align-requirements` 的写作与配图要求。模板是可本地打开的自包含 HTML，不需要 pack；截图工具不提供评论、答题导出或确认回传。
+
+```powershell
+$ALIGN_DIR = Join-Path (Split-Path $SKILL_DIR -Parent) 'align-requirements'
+node (Join-Path $ALIGN_DIR 'scripts/shot.mjs') '<可信本地页面绝对路径>' '<项目缓存或澄清目录下的截图目录>' --playwright '<已有Playwright依赖的项目目录>'
+```
+
+已能从当前环境加载 Playwright 时省略 `--playwright`，或使用 `PLAYWRIGHT_DIR`。沿用已有浏览器；缺失依赖时按授权在本机隔离环境准备，不静默改生产项目或全局配置。查看亮色/暗色/手机图片、编号图及横向溢出报告；脚本成功不证明文字/线条无重叠。意见默认在当前对话引用页面版本与章节/图号，已有获准宿主评论工具时才读取其定位信息，不要求旧版答题按钮或新建反馈服务。
+
 ## 只读模型与额度查询
 
 先按[临时模型分类与只读查询](models.md)核实接入及当前模型的执行器支持。优先用当前已配置的 MCP；以下是无原生连接时的标准库查询入口，只读、不派发、不改全局配置。变量来自用户已信任的本机配置，密钥只从受保护文件或已有环境变量读取，不在命令里写真实值。

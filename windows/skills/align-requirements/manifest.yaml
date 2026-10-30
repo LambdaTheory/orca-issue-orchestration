@@ -1,0 +1,30 @@
+schema_version: 1
+
+name: align-requirements
+version: 1.0.0
+description: 需求对齐：把你理解的需求写成一页需求文档（摘要、目录、编号图、决定记录），按用户在页面上的评论逐版迭代到满意，再把定下的事写回项目的设计文档。用户说对齐需求、澄清或挖掘需求、你理解的需求是什么、把需求整理成文档时使用；Orca 编排内展示 PRD 对应版本并收集意见，决定更新回统一正文
+entrypoint: SKILL.md
+
+author: team-platform
+license: internal
+
+tags:
+  - requirements
+  - alignment
+  - html
+  - review
+
+compatibility:
+  codex: ">=0.148.0"
+  opencode: ">=1.18.19"
+
+tools:
+  - name: node
+    required: false
+  - name: playwright
+    required: false
+
+permissions:
+  network: false
+  shell: true
+  write_files: true

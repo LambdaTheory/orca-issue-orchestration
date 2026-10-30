@@ -1,16 +1,16 @@
 # Orca Issue Orchestration · macos · v1.1.1
 
-当前未发布源码包含完整 12 个 skills（已发布 v1.1.1 包为 11 个，未更新），使用 bash / zsh 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
+当前未发布源码包含完整 13 个 skills（html-plan 仅保留独立用途）（已发布 v1.1.1 包为 11 个，未更新），使用 bash / zsh 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
 
 ## 安装与启动
 
 1. 将本目录的 `skills/` 内容放入所用 Agent 支持的技能目录。已有同名文件时先比较，不直接覆盖本地修改。
-2. 在 Orca 打开目标项目，确认 Python 3、Git、GitHub CLI 和目标 Agent 可用。HTML 方案打包另需 Node.js。
+2. 在 Orca 打开目标项目，确认 Python 3、Git、GitHub CLI 和目标 Agent 可用。页面自查另需 Node.js；截图使用已有 Playwright 与浏览器，未配置时如实说明。
 3. 让 Agent 使用 `orca-issue-orchestration` 读取仓库事实和现有需求，再继续编排。
 
 `ORCA_ISSUE_SKILL_DIR` 可覆盖主 skill 的安装目录；`ORCA_ISSUE_PYTHON` 可指定 Python 3 解释器。路径必须按当前执行宿主填写，安装目录与开发项目目录不是同一个概念。
 
-需求澄清由 `wayfinder` 推进，`prd-writing` 整理统一 PRD / SPEC，`html-plan` 展示对应版本并收集答复；有效决定校验后更新回同一份正文，关键缺口回到 wayfinder。已确认需求直接复用，小改动不强制完整 PRD、Map 或 HTML。衔接见 `skills/orca-issue-orchestration/references/requirements.md`。
+需求澄清由 `wayfinder` 推进，`prd-writing` 整理统一 PRD / SPEC，`align-requirements` 展示对应版本并在对话或已有获准评论工具中收集意见；有效决定校验后更新回同一份正文，关键缺口回到 wayfinder。已确认需求直接复用，小改动不强制完整 PRD、Map 或 HTML。衔接见 `skills/orca-issue-orchestration/references/requirements.md`。
 
 新任务暂按用户确认的分类核对模型，唯一分类表见 `skills/orca-issue-orchestration/references/models.md`；MCP 提供正式分组后移除临时分类。本端只读 OMC 目录与额度，不实现分组、排序、预约或自动替换，不改运行中的会话或全局模型。接入方式见命令参考。
 

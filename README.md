@@ -1,6 +1,6 @@
 # Orca Issue Orchestration Skill Suite
 
-**最近发布：v1.1.1** · 当前未发布源码：Windows / macOS 双平台、12 个项目级 skills
+**最近发布：v1.1.1** · 当前未发布源码：Windows / macOS 双平台、13 个项目级 skills（html-plan 仅保留独立用途）
 
 面向 Orca 的目标驱动开发套件：从仓库探查、需求确认和 GitHub Issue 开始，由协调者安排独立 Agent 开发、评审与修复，最终按授权交付。协调者不代替 worker 写业务实现。
 
@@ -17,7 +17,7 @@
 - 套件版本由根目录 `VERSION` 记录；这是整个套件的版本，不改变内含第三方 skill 的上游版本号。
 - 源码分别位于 `windows/skills/` 和 `macos/skills/`，按实际执行宿主选择，不能混装两份同名 skill。
 - 两平台源码只差参考文档中的平台示例：`references/commands.md` 按平台整套生成，`references/guard.md` 启动示例与 `references/pr.md` 平台选择说明随平台变化；其余文件完全相同，避免两份手工维护产生漂移。
-- 对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从源码安装。已发布 v1.1.1 的两个平台包各含 11 个 skills；当前未发布源码各含 12 个，新增 `prd-writing` 及流程调整尚未打入这些 ZIP。其来源为团队内部许可，公开分发前须核实相应授权，不能据源码说明推断旧包已更新。
+- 对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从源码安装。已发布 v1.1.1 的两个平台包各含 11 个 skills；当前未发布源码各含 13 个，新增 `prd-writing`、`align-requirements` 及流程调整尚未打入这些 ZIP；旧 `html-plan` 只保留独立用途，非主流程依赖。其来源为团队内部许可，公开分发前须核实相应授权，不能据源码说明推断旧包已更新。
 - `SHA256SUMS.txt` 用于核对下载文件；变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 执行宿主 | 源码 | Release 文件 |
@@ -29,12 +29,12 @@
 
 ```text
 探查已有事实 → wayfinder 澄清 → prd-writing 整理统一需求
-→ html-plan 展示对应版本并确认（答复更新回 PRD）→ 创建/复用实现 Issue
+→ align-requirements 展示需求并收意见确认（决定更新回 PRD）→ 创建/复用实现 Issue
 → Orca 开发 worker → 一次独立评审 → 必要修复与验证
 → 按授权交付 PR → 记录结果并收口
 ```
 
-- 需求澄清默认进入 `wayfinder`；`prd-writing` 检查并整理统一 PRD（已有 SPEC 可直接承担），`html-plan` 只展示对应版本并收集答复。关键缺口回到 wayfinder，有效决定校验后更新回 PRD；已有确认直接复用，小改动不强制完整 PRD、Map 或 HTML。三者不会各自访谈或重复确认，见[需求衔接](windows/skills/orca-issue-orchestration/references/requirements.md)。
+- 需求澄清默认进入 `wayfinder`；`prd-writing` 检查并整理统一 PRD（已有 SPEC 可直接承担），`align-requirements` 用需求文档式页面展示对应版本并收集意见，默认在当前对话反馈，不假定模板自带评论或答题导出。关键缺口回到 wayfinder，有效决定校验后更新回 PRD；已有确认直接复用，小改动不强制完整 PRD、Map 或 HTML。三者不会各自访谈或重复确认，见[需求衔接](windows/skills/orca-issue-orchestration/references/requirements.md)。
 - 新任务暂按用户确认的任务分类核对模型，唯一分类表见[临时模型分类与只读查询](windows/skills/orca-issue-orchestration/references/models.md)；MCP 提供正式分组后移除。本端只读取 OMC 模型目录与额度，不实现分组、排序、预约或自动替换，不维护第二套长期调度规则。
 - 默认串行执行；开发、修复、评审及原生子代理共用模型并发额度，临时分类不扩大并发，已有项目约定优先。
 - 空超时和存活心跳由等待脚本处理，不反复唤醒协调模型；脚本默认每轮检查后间隔 60 秒只读检查 worker，done/idle 未结算持续 120 秒或无可见进展 900 秒时发出核查提醒，不自动判死或重派。
@@ -49,7 +49,8 @@
 |---|---|
 | `orca-issue-orchestration` | 主入口：初始化、需求确认、GitHub Issue、Orca 开发与评审编排 |
 | `prd-writing` | 写前查漏、统一 PRD / SPEC、需求—测试—验收对应；关键缺口回到 wayfinder |
-| `html-plan` | PRD 对应版本的中文展示、问题与答复收集，也可独立制作 HTML 方案 |
+| `align-requirements` | 主流程需求文档展示、意见迭代与确认，关联统一 PRD / SPEC |
+| `html-plan` | 仅保留独立实施方案用途；不再参与主流程，也不作为回退 |
 | `implement` | 按已确认的 SPEC / Issue 执行实现 |
 | `code-review` | 独立的 Standards / Spec 双轴评审；编排主流程不默认叠加调用 |
 | `codebase-design` | 模块接口与设计分析 |
@@ -66,7 +67,7 @@
 
 - 执行宿主已安装、启动 Orca，`orca status --json` 可访问。按当前二进制返回的 `orca skills get orchestration` / `orca skills get orca-cli` 使用命令。
 - Python 3、Git、GitHub CLI；GitHub CLI 已登录并有目标仓库的必要权限。
-- Node.js 用于 HTML 方案打包和相关测试。
+- Node.js 用于页面与截图自查；`align-requirements/scripts/shot.mjs` 另需已有 Playwright 与浏览器，可通过 `--playwright` 或 `PLAYWRIGHT_DIR` 指定，不改全局 Agent 配置。旧 html-plan 独立打包仍使用 Node.js。
 - Windows 使用 PowerShell；仅旧 GitHub watcher 回退需要真正的 Git Bash，不能选 WSL 的同名 `bash.exe`。
 - macOS 使用 bash / zsh。非交互进程也必须能找到实际 Python 和其他命令。
 - 用 webhook 监听 Issue 时按平台的命令参考申领个人凭据：首次 `TW start` 用 `gh auth token` 换取当前 GitHub 登录凭据，仅发送到你明确信任的 HTTPS 服务换取个人 message token，凭据自动保存为按服务 URL hash 区分的本机 JSON；401/403 属认证阻断，回到前台登录后再启动。需要时用 `WATCH_URL` 覆盖默认 webhook 服务地址。发布包不包含令牌，不会替你创建订阅或启动 watcher；旧监听迁移不复用旧共享 token 或无 owner 的旧 consumer，由用户确认暂停旧托管后在新状态目录建立个人订阅并完成对账。
@@ -147,11 +148,15 @@ Webhook 服务地址默认 `https://githubwebhook.madebynight.top`；需要时�
 
 ```powershell
 python -X utf8 -B -m unittest discover -s windows/skills/orca-issue-orchestration/scripts -p "*_test.py"
+node --test windows/skills/align-requirements/scripts/shot.test.mjs
+# html-plan 独立工具保留原测试，不属于主流程
 node --test windows/skills/html-plan/runtime/pack.test.mjs
 ```
 
 ```bash
 python3 -X utf8 -B -m unittest discover -s macos/skills/orca-issue-orchestration/scripts -p '*_test.py'
+node --test macos/skills/align-requirements/scripts/shot.test.mjs
+# html-plan 独立工具保留原测试，不属于主流程
 node --test macos/skills/html-plan/runtime/pack.test.mjs
 ```
 

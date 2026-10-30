@@ -1,6 +1,6 @@
 ---
 name: prd-writing
-description: 团队同步 PRD、Bug 调研结论和需求开发方案文档。整理已查明的 Bug/需求材料为团队评审、实施与验收的 Markdown PRD；在 Orca 的 wayfinder 澄清后调用，html-plan 展示对应版本并收集确认。关键分歧未解决时只返回缺口，不伪造完整文档。
+description: 团队同步 PRD、Bug 调研结论和需求开发方案文档。整理已查明的 Bug/需求材料为团队评审、实施与验收的 Markdown PRD；在 Orca 的 wayfinder 澄清后调用，align-requirements 展示对应版本并收集确认。关键分歧未解决时只返回缺口，不伪造完整文档。
 ---
 
 # PRD Writing
@@ -11,7 +11,7 @@ description: 团队同步 PRD、Bug 调研结论和需求开发方案文档。�
 
 来源：`LambdaTheory/team-skills` 的 `skills/prd-writing`，固定提交 `db85b2c7fd8e9f4769d8bb6d963c9108b307e5cf`，上游版本 1.1.0，许可标记为 internal；保留随附 manifest 和模板。本节优先说明编排内的接法，独立使用仍遵守下文材料门槛。
 
-- **分工**：wayfinder 负责发现和推进待决问题；本 skill 负责写前检查、整理需求与验收；html-plan 只展示对应版本的 PRD 并收集答复。完整交接见同套件 `orca-issue-orchestration/references/requirements.md`，不另开一轮访谈。
+- **分工**：wayfinder 负责发现和推进待决问题；本 skill 负责写前检查、整理需求与验收；align-requirements 只展示对应版本的 PRD 并收集答复。完整交接见同套件 `orca-issue-orchestration/references/requirements.md`，不另开一轮访谈。
 - **缺口返回**：可以先做材料评估，但目标、方案或范围仍有关键分歧时，只输出缺口清单和已有内容，不生成伪完整 PRD，不把未决项默认为推荐答案。需要产品决定的缺口交回 wayfinder；可查事实做最小核查，不重复扫描全部材料，也不强制派子代理。
 - **统一依据**：沿用项目已有 PRD / SPEC 的文档位置，指定一份需求正文，修订同一份文档，不每轮另建互相竞争的 PRD。已有 SPEC 满足约定时直接复用其作为 PRD，不强制改名或搬家。Map / 决策票保留决定的理由与来源，PRD 引用其结果；HTML 不是另一份需求依据。
 - **版本与回写**：PRD 带文档 ID、版本和需求/验收 ID；页面绑定同一 PRD 版本和当前讨论范围。协调者先校验答复来源和版本，再将有效决定更新回 PRD 并记录来源；保留已展示快照，不覆盖旧答复。内容改变才更新版本；纯整理不重新索取批准。

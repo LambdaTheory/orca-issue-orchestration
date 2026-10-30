@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 主需求流程使用 `align-requirements` 替代 html-plan：采用摘要、目录、编号图和附录决定记录的需求文档页面，意见来自当前对话或已有获准评论工具；模板无内置评论、答题导出或自动回写，不再要求 Respond/Copy response。wayfinder 与统一 PRD / SPEC、版本核对及一次确认边界保持。
+- 加入团队 align-requirements 1.0.0 固定来源、原始模板/参考/manifest、本地 PRD 示例及截图测试；修正截图脚本 Windows 文件 URL。html-plan 仅保留独立用途，不作为主流程依赖或回退；未发布源码每平台 13 个 skills，旧发布包和现有安装未变。
+
 - 接入团队 `prd-writing` 1.1.0 的固定来源版本：wayfinder 负责问题和决定，PRD / 已有 SPEC 为统一需求依据，html-plan 展示对应版本并收集反馈；关键缺口返回 wayfinder，有效答复校验后更新回同一份正文。保留原模板与 internal 来源声明，未修改上游仓库。
 - 新增需求衔接参考和版本化 PRD 展示示例；页面关联文档 ID、版本、轮次与需求/验收 ID，明确单票确认范围、旧答复处理、同次回复确认复用及实施授权边界。小改动不强制完整 PRD / Map / HTML，不增加第二轮批准或新 Agent。Windows / macOS 套件各含 12 个 skills。
 

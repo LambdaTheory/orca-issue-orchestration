@@ -45,7 +45,7 @@
 - Skill 可达性：<worker 如何读取共享套件；自包含任务说明来源>
 
 ## 需求与验收
-- 需求澄清入口：wayfinder 管问题，prd-writing 整理统一需求正文，html-plan 展示对应版本并收集答复；完整衔接见 `references/requirements.md`
+- 需求澄清入口：wayfinder 管问题，prd-writing 整理统一需求正文，align-requirements 展示对应版本并收集答复；完整衔接见 `references/requirements.md`
 - Map / 决策记录：<复用已有 Map / 票据；小任务无需 Map；远端待创建或未获写入授权时暂存本地澄清记录，确认后再关联真实票号>
 - 项目指引、PRD / SPEC、tracker 路径：<沿用已有位置；指定一份统一需求正文，已有 SPEC 可直接承担，不另造第二份 PRD>
 - 页面与正文对应：<PRD ID/版本/不可变快照、澄清 ID/轮次/当前票或讨论范围、问题 ID → 需求/验收 ID；有效决定校验后更新回正文，旧页面与原答复保留>
