@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>预约取消 PRD-DEMO v1 CLAR-DEMO r1</title>
+<link rel="stylesheet" href="../runtime/htmlplan.css">
+<script src="../runtime/htmlplan.js" defer></script>
+<body data-prd-id="PRD-DEMO" data-prd-version="v1" data-clarification-id="CLAR-DEMO" data-round="r1" data-ticket="取消反馈设计">
+<header><h1>预约取消 PRD-DEMO v1 CLAR-DEMO r1</h1></header>
+<main><doc-plan>
+  <doc-claim id="requirement-r1">
+    <p>用户取消预约后可以看见处理结果。</p>
+    <doc-mock frame="none" w="360" caption="R-1：仅为需求草稿示意，不是真实订单。"><template>
+      <div style="font:16px sans-serif;padding:20px;border:1px solid #ccc;border-radius:12px">
+        <strong>示例预约</strong><p>取消成功后显示：预约已取消。</p><button type="button">取消预约</button>
+      </div>
+    </template></doc-mock>
+    <doc-note>PRD-DEMO v1 · R-1。仅演示展示格式，未确认、未实施。</doc-note>
+  </doc-claim>
+  <doc-claim id="requirement-r2">
+    <p>处理失败时用户能够保留原预约。</p>
+    <doc-quote via="doc" where="PRD-DEMO v1 · R-2" title="需求草稿摘录"><script type="text/plain">
+R-2：取消失败时不展示成功结果，保留原预约状态并说明实际失败原因。
+    </script></doc-quote>
+    <doc-ask id="q1-cancel-retry">
+      <p>Q-1：临时失败后是否提供手动重试入口？</p>
+      <label><input type="radio" name="q1-cancel-retry" value="retry" checked>提供重试入口（推荐，未采纳）</label>
+      <label><input type="radio" name="q1-cancel-retry" value="reason-only">仅显示失败原因</label>
+    </doc-ask>
+    <doc-note>Q-1 → R-2 / AC-2；本页只讨论取消反馈，不能确认整份需求。</doc-note>
+  </doc-claim>
+  <doc-claim id="acceptance-ac1">
+    <p>验收同时核对成功和失败的用户结果。</p>
+    <doc-quote via="doc" where="PRD-DEMO v1 · AC-1 / AC-2" title="验收草稿摘录"><script type="text/plain">
+AC-1：取消成功时，页面与系统记录均为已取消。
+AC-2：临时失败时，保留预约、显示实际原因；重试入口取决于 Q-1 的有效答复。
+    </script></doc-quote>
+  </doc-claim>
+  <doc-claim aux="scope" id="scope">
+    <p>本轮不讨论退款，也不启动开发。</p>
+    <ul><li>仅展示 PRD-DEMO v1 的 R-1、R-2 和 AC-1、AC-2。</li>
+      <li>本页一个待决问题，默认项仅是推荐。</li>
+      <li>Respond 导出后由用户手工粘贴；协调者校验版本后更新同一份 PRD。</li>
+      <li>本示例没有自动写回、外部资源或发布服务。</li></ul>
+  </doc-claim>
+</doc-plan></main>
+</body></html>

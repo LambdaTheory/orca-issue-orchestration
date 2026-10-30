@@ -1,6 +1,6 @@
 # Orca Issue Orchestration Skill Suite
 
-**当前版本：v1.1.1** · Windows / macOS 双平台 · 11 个项目级 skills
+**最近发布：v1.1.1** · 当前未发布源码：Windows / macOS 双平台、12 个项目级 skills
 
 面向 Orca 的目标驱动开发套件：从仓库探查、需求确认和 GitHub Issue 开始，由协调者安排独立 Agent 开发、评审与修复，最终按授权交付。协调者不代替 worker 写业务实现。
 
@@ -17,7 +17,7 @@
 - 套件版本由根目录 `VERSION` 记录；这是整个套件的版本，不改变内含第三方 skill 的上游版本号。
 - 源码分别位于 `windows/skills/` 和 `macos/skills/`，按实际执行宿主选择，不能混装两份同名 skill。
 - 两平台源码只差参考文档中的平台示例：`references/commands.md` 按平台整套生成，`references/guard.md` 启动示例与 `references/pr.md` 平台选择说明随平台变化；其余文件完全相同，避免两份手工维护产生漂移。
-- 对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从源码安装。两个平台包均包含完整的 11 个 skills、平台说明和许可文件。
+- 对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从源码安装。已发布 v1.1.1 的两个平台包各含 11 个 skills；当前未发布源码各含 12 个，新增 `prd-writing` 及流程调整尚未打入这些 ZIP。其来源为团队内部许可，公开分发前须核实相应授权，不能据源码说明推断旧包已更新。
 - `SHA256SUMS.txt` 用于核对下载文件；变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 执行宿主 | 源码 | Release 文件 |
@@ -28,12 +28,13 @@
 ## 核心流程
 
 ```text
-探查已有事实 → wayfinder 澄清与确认需求 → 创建/复用实现 Issue
+探查已有事实 → wayfinder 澄清 → prd-writing 整理统一需求
+→ html-plan 展示对应版本并确认（答复更新回 PRD）→ 创建/复用实现 Issue
 → Orca 开发 worker → 一次独立评审 → 必要修复与验证
 → 按授权交付 PR → 记录结果并收口
 ```
 
-- 需求澄清默认进入 `wayfinder`，不再设置固定 grilling 访谈入口，也不要求另行输入 `/wayfinder`；已有确认直接复用。`html-plan` 保留为当前讨论的问题页面与答复工具；小任务不强制建 Map，复杂决策按 Map / 决策票逐步推进。
+- 需求澄清默认进入 `wayfinder`；`prd-writing` 检查并整理统一 PRD（已有 SPEC 可直接承担），`html-plan` 只展示对应版本并收集答复。关键缺口回到 wayfinder，有效决定校验后更新回 PRD；已有确认直接复用，小改动不强制完整 PRD、Map 或 HTML。三者不会各自访谈或重复确认，见[需求衔接](windows/skills/orca-issue-orchestration/references/requirements.md)。
 - 新任务暂按用户确认的任务分类核对模型，唯一分类表见[临时模型分类与只读查询](windows/skills/orca-issue-orchestration/references/models.md)；MCP 提供正式分组后移除。本端只读取 OMC 模型目录与额度，不实现分组、排序、预约或自动替换，不维护第二套长期调度规则。
 - 默认串行执行；开发、修复、评审及原生子代理共用模型并发额度，临时分类不扩大并发，已有项目约定优先。
 - 空超时和存活心跳由等待脚本处理，不反复唤醒协调模型；脚本默认每轮检查后间隔 60 秒只读检查 worker，done/idle 未结算持续 120 秒或无可见进展 900 秒时发出核查提醒，不自动判死或重派。
@@ -47,7 +48,8 @@
 | Skill | 用途 |
 |---|---|
 | `orca-issue-orchestration` | 主入口：初始化、需求确认、GitHub Issue、Orca 开发与评审编排 |
-| `html-plan` | wayfinder 内的中文问题页面与答复收集，也可独立制作 HTML 方案 |
+| `prd-writing` | 写前查漏、统一 PRD / SPEC、需求—测试—验收对应；关键缺口回到 wayfinder |
+| `html-plan` | PRD 对应版本的中文展示、问题与答复收集，也可独立制作 HTML 方案 |
 | `implement` | 按已确认的 SPEC / Issue 执行实现 |
 | `code-review` | 独立的 Standards / Spec 双轴评审；编排主流程不默认叠加调用 |
 | `codebase-design` | 模块接口与设计分析 |

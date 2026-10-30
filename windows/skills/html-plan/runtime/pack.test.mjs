@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 const packPath = fileURLToPath(new URL('./pack.mjs', import.meta.url));
 const quantityWarning = /doc-plan: \d+ decisions —/;
@@ -37,12 +38,12 @@ function page(count) {
 </body></html>`;
 }
 
-function withPackedPage(count, check) {
+function withPackedPage(count, check, html = page(count)) {
   const dir = mkdtempSync(join(tmpdir(), 'html-plan-pack-'));
   try {
     const input = join(dir, 'plan.html');
     const output = join(dir, 'plan.packed.html');
-    writeFileSync(input, page(count), 'utf8');
+    writeFileSync(input, html, 'utf8');
     const result = spawnSync(process.execPath,
       [packPath, input, '--root', dir, '-o', output],
       { cwd: dir, encoding: 'utf8', timeout: 30_000 });
@@ -85,4 +86,71 @@ test('Chinese content packs successfully with both runtime assets inlined', () =
     assert.doesNotMatch(packed, /<script[^>]+src="htmlplan\.js"/);
     // English-oriented grammar warnings for Chinese are allowed.
   });
+});
+
+
+test('versioned PRD view preserves document identity, scope and question mapping offline', () => {
+  const source = readFileSync(new URL('../examples/prd-confirmation.html', import.meta.url), 'utf8');
+  withPackedPage(1, ({ report, packed }) => {
+    assert.doesNotMatch(report, quantityWarning);
+    assert.match(report, /2 asset\(s\) inlined/);
+    assert.ok(packed.includes('<title>预约取消 PRD-DEMO v1 CLAR-DEMO r1</title>'));
+    assert.ok(packed.includes('<h1>预约取消 PRD-DEMO v1 CLAR-DEMO r1</h1>'));
+    for (const metadata of ['data-prd-id="PRD-DEMO"', 'data-prd-version="v1"',
+      'data-clarification-id="CLAR-DEMO"', 'data-round="r1"']) {
+      assert.ok(packed.includes(metadata), metadata);
+    }
+    assert.ok(packed.includes('id="q1-cancel-retry"'));
+    assert.ok(packed.includes('Q-1 → R-2 / AC-2'));
+    assert.ok(packed.includes('不能确认整份需求'));
+    assert.ok(packed.includes('协调者校验版本后更新同一份 PRD'));
+    assert.doesNotMatch(source, /(?:src|href)="https?:/);
+    assert.ok(!source.includes('fetch('));
+    assert.doesNotMatch(packed, /<link[^>]+href="[^"]*htmlplan\.css"/);
+    assert.doesNotMatch(packed, /<script[^>]+src="[^"]*htmlplan\.js"/);
+  }, source);
+});
+
+
+test('Respond exports PRD identity and visible question ID without treating defaults as approval', () => {
+  const runtime = readFileSync(new URL('./htmlplan.js', import.meta.url), 'utf8');
+  const start = runtime.indexOf('function buildResponse() {');
+  const end = runtime.indexOf(String.fromCharCode(10) + '}', start) + 2;
+  assert.ok(start >= 0 && end > start);
+  const title = '预约取消 PRD-DEMO v1 CLAR-DEMO r1';
+  const control = { type: 'radio', name: 'q1-cancel-retry', dataset: {}, matches: () => false };
+  const ask = {
+    id: 'q1-cancel-retry',
+    querySelector: (selector) => selector.startsWith(':scope')
+      ? { textContent: 'Q-1：临时失败后是否提供手动重试入口？' } : control,
+    closest: () => ({ dataset: { no: '2' } }),
+  };
+  const context = {
+    $: (selector) => selector === 'h1' ? { textContent: title } : null,
+    $$: (selector, root) => selector === 'doc-ask' ? [ask] : root === ask ? [control] : [],
+    readAnswers: () => ({ 'q1-cancel-retry': 'retry' }),
+    document: { title: 'fallback title' },
+    S: { defaults: { 'q1-cancel-retry': 'retry' }, seen: {}, strikes: {}, comments: {} },
+    same: (a, b) => a === b,
+    optionLabel: () => '提供重试入口',
+    CSS: { escape: (value) => value },
+    machines: {},
+  };
+  const response = runInNewContext(runtime.slice(start, end) + '; buildResponse();', context);
+  assert.ok(response.md.startsWith('# Re: ' + title));
+  assert.ok(response.md.includes('Q-1：临时失败后是否提供手动重试入口？'));
+  assert.ok(response.md.includes('_(not opened; default kept)_'));
+  assert.equal(response.nChanged, 0);
+  assert.equal(response.nAsks, 1);
+});
+
+test('new PRD versions and rounds have distinct browser draft keys', () => {
+  const runtime = readFileSync(new URL('./htmlplan.js', import.meta.url), 'utf8');
+  const keyLine = runtime.split(String.fromCharCode(10)).find((line) => line.startsWith('const KEY = '));
+  assert.ok(keyLine);
+  const keyFor = (title) => runInNewContext(keyLine + '; KEY;', {
+    location: { pathname: '/clarification/plan.packed.html' }, document: { title },
+  });
+  assert.notEqual(keyFor('PRD-DEMO v1 CLAR-DEMO r1'), keyFor('PRD-DEMO v2 CLAR-DEMO r1'));
+  assert.notEqual(keyFor('PRD-DEMO v1 CLAR-DEMO r1'), keyFor('PRD-DEMO v1 CLAR-DEMO r2'));
 });

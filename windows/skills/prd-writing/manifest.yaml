@@ -1,0 +1,28 @@
+schema_version: 1
+
+name: prd-writing
+version: 1.1.0
+description: 将已完成的 Bug/需求调研结论和已完善的开发计划整理为团队评审、实施和验收用 PRD 文档
+entrypoint: SKILL.md
+
+author: lhw
+license: internal
+
+tags:
+  - prd
+  - documentation
+  - team-sync
+  - planning
+
+compatibility:
+  codex: ">=0.148.0"
+  opencode: ">=1.18.19"
+
+tools:
+  - name: filesystem
+    required: true
+
+permissions:
+  network: false
+  shell: false
+  write_files: true
