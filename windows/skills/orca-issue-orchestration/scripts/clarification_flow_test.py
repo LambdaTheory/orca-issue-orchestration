@@ -13,11 +13,22 @@ def read(relative):
 
 
 class ClarificationFlow(unittest.TestCase):
+    def test_clarification_phase_keeps_prototype_domain_modeling_and_reuse_boundaries(self):
+        wayfinder = read("wayfinder/SKILL.md")
+        for text in ["stay exploratory artifacts",
+                     "do not follow its standalone fold-back/production-absorption step",
+                     "a resolved design ticket is not authorization to implement",
+                     "reuse the project's agreed document locations",
+                     "ask the user to confirm the location",
+                     "retain modeling decisions in the agreed clarification record",
+                     "Reuse confirmed requirements and existing Maps instead of interviewing again",
+                     "never pad the batch with invented questions"]:
+            self.assertIn(text, wayfinder)
     def test_orchestration_routes_to_wayfinder_and_alignment(self):
         entry = read("orca-issue-orchestration/SKILL.md")
-        self.assertIn("需要澄清时默认调用同套件 `wayfinder`", entry)
+        self.assertIn("启动或恢复本工作流时必须调用同套件 `wayfinder`", entry)
         self.assertIn("不要求用户另行输入 `/wayfinder`", entry)
-        self.assertIn("已有确认且范围未变就直接继续", entry)
+        self.assertIn("已有确认且范围未变就复用", entry)
         self.assertIn("align-requirements", entry)
         self.assertIn("首批实现 Issue", entry)
 
@@ -25,47 +36,51 @@ class ClarificationFlow(unittest.TestCase):
         skill = read("wayfinder/SKILL.md")
         self.assertNotIn("disable-model-invocation: true", skill)
         self.assertNotIn("Use Wayfinder only when", skill)
-        self.assertIn("invokes Wayfinder by default", skill)
+        self.assertIn("invokes this skill by default", skill)
         config = read("wayfinder/agents/openai.yaml")
         self.assertIn("allow_implicit_invocation: true", config)
 
     def test_preparation_has_one_default_entry(self):
         preparation = read("orca-issue-orchestration/references/preparation.md")
-        for text in ["## 需求澄清与确认：wayfinder", "**默认 wayfinder**", "每 session 一张 HITL 票",
-                     "答题不自动等于批准", "模板没有内置评论、答题导出或自动回写"]:
+        for text in ["## 需求澄清与确认：wayfinder", "**默认 wayfinder**", "批量发布到 Answer Desk",
+                     "同一题只有一个答复受理口", "一条答复按 Answer ID 与 questionVersion 只处理一次",
+                     "答题不自动等于批准"]:
             self.assertIn(text, preparation)
         self.assertNotIn("wayfinder 仅显式启用", preparation)
 
     def test_pending_remote_does_not_block_clarification(self):
         preparation = read("orca-issue-orchestration/references/preparation.md")
-        for text in ["待新建计划及授权已明确", "在下述本地澄清记录目录暂存 Map / 决策记录",
-                     "不提前建库、不强行写 GitHub", "需求澄清期间不启动 watcher、不创建开发 Run、不派开发 worker"]:
+        for text in ["待新建计划及授权已明确", "Map 只用 Wayfinder MCP 的",
+                     "工具缺失或服务失败时明确暂停并说明原因", "不做旁路 HTTP 写，不用 GitHub 或本地文件替代地图状态",
+                     "规划阶段不启动 watcher、不创建开发 Run、不派开发 worker"]:
             self.assertIn(text, preparation)
         wayfinder = read("wayfinder/SKILL.md")
         self.assertIn("**Orca preparation override:**", wayfinder)
-        self.assertIn("keep the map and decision records in the agreed local clarification directory", wayfinder)
+        self.assertIn("never migrate them into the service", wayfinder)
 
-    def test_small_task_returns_without_an_extra_start_question(self):
+    def test_no_small_task_or_prior_confirmation_branch_skips_map(self):
         wayfinder = read("wayfinder/SKILL.md")
-        for text in ["you don't need a map", "continue without an extra proceed question",
-                     "return the clarified scope, acceptance criteria and confirmation record"]:
+        for text in ["every start or resume", "create or restore an MCP Map", "Zero Tickets do not waive the Map"]:
             self.assertIn(text, wayfinder)
+        for text in ["need no Map", "Small changes need no full PRD, Map", "lightweight requirement"]:
+            self.assertNotIn(text, wayfinder)
 
     def test_alignment_is_presentation_and_feedback_not_another_interview(self):
         alignment = read("align-requirements/SKILL.md")
         for text in ["## Orca 套件衔接（本地适配）", "不重新访谈", "不输出实施方案树",
-                     "模板没有内置评论、答题导出或自动回写", "默认在当前对话", "小改动不强制完整 PRD"]:
+                     "模板没有内置评论、答题导出或自动回写", "默认在当前对话", "创建或恢复 MCP Map"]:
             self.assertIn(text, alignment + read("orca-issue-orchestration/references/requirements.md"))
         self.assertIn("不作为本流程的默认入口、依赖或失败回退",
                       read("orca-issue-orchestration/references/requirements.md"))
 
     def test_map_tickets_reuse_the_task_label(self):
         labels = read("orca-issue-orchestration/templates/issues/LABELS.md")
-        for text in ["提前到首张 Map / 决策票之前创建", "后续实现阶段复用", "wayfinder Map / 决策票"]:
+        for text in ["不再在 GitHub 建 Map", "只读历史，保持原样、不迁移不双写", "wayfinder Map / 决策票"]:
             self.assertIn(text, labels)
         preparation = read("orca-issue-orchestration/references/preparation.md")
-        self.assertIn("按已有权限记录完成结论并关闭 Map", preparation)
-        self.assertIn("不能为停止 watcher 提前关闭未决 Map / 票据", preparation)
+        self.assertIn("以当前 `map_read` 核对相关票全部 settle、无阻断 Fog", preparation)
+        self.assertIn("空 Frontier 不算完成", preparation)
+        self.assertIn("不编造 map.close", preparation)
 
     def test_changed_shared_files_match_on_both_platforms(self):
         shared = (
@@ -96,7 +111,7 @@ class ClarificationFlow(unittest.TestCase):
             self.assertIn(text, guide)
         wayfinder = read("wayfinder/SKILL.md")
         for text in ["prd-writing/SKILL.md", "A key gap goes back to Wayfinder",
-                     "Do not call the writer to create a new PRD for every ticket"]:
+                     "do not turn an unresolved proposal into a complete PRD"]:
             self.assertIn(text, wayfinder)
 
     def test_prd_writer_still_requires_materials_and_keeps_internal_source(self):
@@ -112,15 +127,59 @@ class ClarificationFlow(unittest.TestCase):
 
     def test_feedback_binds_to_version_scope_and_returns_to_prd(self):
         guide = read("orca-issue-orchestration/references/requirements.md")
-        for text in ["PRD ID、版本、澄清 ID、轮次和问题 ID", "不将过期答复直接应用到新版本",
+        for text in ["PRD ID、版本、澄清 ID、轮次和问题 ID", "不将真正过期的答复直接应用到新内容",
                      "将明确有效的决定更新回 PRD", "单票确认只作用于该范围", "明确确认只记录一次",
                      "只重新确认受影响且尚未确认的内容", "同一回复中明确选择修改并确认其结果",
-                     "单票页面的确认不自动覆盖整份 PRD", "模板不自带评论工具、答题导出或自动回写"]:
+                     "单票或单条答复的确认不自动覆盖整份 PRD", "模板不自带评论工具、答题导出或自动回写"]:
             self.assertIn(text, guide)
 
-    def test_small_changes_and_prior_approval_do_not_add_a_gate(self):
+    def test_revision_growth_alone_does_not_require_another_answer(self):
         guide = read("orca-issue-orchestration/references/requirements.md")
-        for text in ["小改动不强制完整 PRD、Map 或 HTML", "不能因引入 PRD 增加批准关卡",
+        for required in ("claim、research 或独立票 settle 都会正常推进 Revision",
+                         "当前 questionVersion 与 Answer ID 未变",
+                         "不能仅因 Map Revision 或 PRD 版本前进就判过期或重问",
+                         "Settlement 绑定", "所涉 PRD 需求是否实质改变",
+                         "处理凭据由同一澄清检查点保存，服务 Settlements 才是权威"):
+            self.assertIn(required, guide)
+        self.assertNotIn("PRD 版本或 Map Revision 已前进的答复按过期处理", guide)
+
+    def test_charting_can_continue_and_service_license_is_not_assigned(self):
+        wayfinder = read("wayfinder/SKILL.md")
+        self.assertIn("Continue directly into the first Frontier batch in the same session", wayfinder)
+        self.assertNotIn("charting is one session's work", wayfinder)
+        self.assertIn("Matt Pocock's wayfinder skill (MIT)", wayfinder)
+        self.assertIn("license is governed by its upstream repository", wayfinder)
+        self.assertNotIn("wayfinder_map_service (MIT)", wayfinder)
+        self.assertNotIn(bytes([13]), (SKILLS / "wayfinder/SKILL.md").read_bytes())
+
+    def test_desk_answered_user_does_not_need_a_second_comment(self):
+        for relative in ("orca-issue-orchestration/templates/issues/user-decision.md",
+                         "orca-issue-orchestration/references/operations.md"):
+            text = read(relative)
+            self.assertIn("Desk 已答的人不再要求发评论", text)
+            self.assertIn("阻塞回链与已采用结论", text)
+
+    def test_conversation_and_recommendation_scope_are_specific(self):
+        preparation = read("orca-issue-orchestration/references/preparation.md")
+        for required in ("需求页面的普通反馈默认让用户在当前对话", "已展示具体答案的明确对话 verdict",
+                         "同批 withdraw", "answered in conversation", "不带 ",
+                         "不同时保留两个受理口", "只覆盖已经展示且所指明确的具体答案",
+                         "未展示的推荐、后续批次或含糊的 blanket 授权不算决定"):
+            self.assertIn(required, preparation)
+
+    def test_readme_distinguishes_connectivity_mechanical_checks_and_authority(self):
+        readme = (SUITE / "README.md").read_text(encoding="utf-8")
+        for required in ("WaitForMcpServers", "ToolSearch", "alwaysLoad: true",
+                         "defer_loading: false", "required", "startup_readiness",
+                         "wayfinder://workflow/exploration", "revision.state.tickets",
+                         "只按传入的已处理键判重", "不保证业务只处理一次",
+                         "服务 Settlements 才是权威", "工具名字符串齐全不等于已连上服务"):
+            self.assertIn(required, readme)
+        self.assertNotIn("保证同一条 Answer 只处理一次", readme)
+
+    def test_mandatory_map_reuses_prior_approval_without_extra_approval_gate(self):
+        guide = read("orca-issue-orchestration/references/requirements.md")
+        for text in ["不跳过 Map", "不能因引入 PRD 增加批准关卡",
                      "关键阻断未决项未解决时，不派开发", "需求确认和实施授权分别核对"]:
             self.assertIn(text, guide)
         alignment = read("align-requirements/SKILL.md")
@@ -148,7 +207,7 @@ class ClarificationFlow(unittest.TestCase):
     def test_suite_adds_alignment_and_readiness_references_prd(self):
         self.assertEqual(len(list(SKILLS.glob("*/SKILL.md"))), 13)
         preparation = read("orca-issue-orchestration/references/preparation.md")
-        for text in ["[需求衔接](requirements.md)", "展示答复已校验并更新回正文",
+        for text in ["[需求衔接](requirements.md)", "展示与 Desk 答复已校验并更新回正文",
                      "确认版 PRD / SPEC 的不可变快照与需求/验收 ID"]:
             self.assertIn(text, preparation)
 

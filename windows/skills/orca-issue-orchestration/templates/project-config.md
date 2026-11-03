@@ -46,10 +46,10 @@
 
 ## 需求与验收
 - 需求澄清入口：wayfinder 管问题，prd-writing 整理统一需求正文，align-requirements 展示对应版本并收集答复；完整衔接见 `references/requirements.md`
-- Map / 决策记录：<复用已有 Map / 票据；小任务无需 Map；远端待创建或未获写入授权时暂存本地澄清记录，确认后再关联真实票号>
+- Map / 决策记录：<新需求 Map 唯一权威为 Wayfinder MCP（map_create/map_list/map_read/map_apply/map_wait），记录 mapId、claimantId、Ticket 标题+ID 与 Revision；每次工作流启动或恢复必须关联当前 Map，不按规模免图；无真实待决事项可零票，Ticket / Answer 字段如实记为无，不虚构票；旧 GitHub wayfinder 图只读历史，不迁移不双写；MCP 工具缺项或服务失败时的处置：明确暂停并说明，不做旁路写>
 - 项目指引、PRD / SPEC、tracker 路径：<沿用已有位置；指定一份统一需求正文，已有 SPEC 可直接承担，不另造第二份 PRD>
-- 页面与正文对应：<PRD ID/版本/不可变快照、澄清 ID/轮次/当前票或讨论范围、问题 ID → 需求/验收 ID；有效决定校验后更新回正文，旧页面与原答复保留>
-- 确认记录与需求版本：<用户原话、确认范围及同一 PRD / SPEC 的固定快照；明确批准不重复索取，小改动不强制完整 PRD / Map / HTML>
+- 页面与正文对应：<PRD ID/版本/不可变快照、澄清 ID/轮次/当前票或讨论范围、问题 ID → 需求/验收 ID；活跃 Map 另记 Ticket 标题+ID、Answer ID 与 questionVersion、Settlement 摘要及对应 PRD 需求/验收 ID；同一 Answer 只处理一次，过期版本不套用；继续派发门禁 = settle + PRD 同步 + 范围确认 + 实施授权；有效决定校验后更新回正文，旧页面与原答复保留>
+- 确认记录与需求版本：<用户原话、确认范围及同一 PRD / SPEC 的固定快照；明确批准不重复索取，不因已有确认跳过 Map；统一 PRD / SPEC 与展示遵守同一流程>
 - 依赖/环境建立命令：<从仓库核实的命令；不需要则不适用>
 - 测试、构建与功能验收：<明确约定的命令及适用条件；无约定则只做本次必要验证，不默认全量测试/build；无现成测试则由实现票建立最小验证>
 - 证据复用：<命令、结果、环境、适用范围、SHA 与证据位置；同 SHA 且环境/范围未变的有效结果复用，新改动/失败/未解决疑点才扩大验证>

@@ -2,6 +2,14 @@
 
 当前未发布源码包含完整 13 个 skills（html-plan 仅保留独立用途）（已发布 v1.1.1 包为 11 个，未更新），使用 bash / zsh 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
 
+## 工作流 Map 门禁
+
+- 每次启动或恢复 `orca-issue-orchestration` 都必须调用同套件 wayfinder 并创建或恢复 MCP Map，不分大小、一轮可答或已有确认；复用当前业务工作流的同一张 Map，不是每轮消息或每个实现子 Issue 各建一图。
+- 已有明确决定与授权复用为票内依据，不重复问、不虚构票、不跳过 Map。没有真实待决事项可以零票，Ticket / Answer 关联如实记为无，但 Map 标题、mapId 与 Revision 必须保留。
+- 工具检查恒查 map_create / map_list / map_read / map_apply / map_wait 五项，缺任一项或服务失败即暂停，不提供 HTTP、GitHub 或本地替代图旁路。核对命令为 `<PY> -X utf8 <SKILL_DIR>/scripts/mcp_gate.py tools --tools <客户端工具列表>`；PY 按宿主选择实际 Python 3 解释器。
+- gate 接收真实 map_read found envelope：revision.mapId 必须是非空字符串、revision.revision 必须是正整数，revision.state 必须存在，state.id 与 revision.mapId、state.currentRevision 与 revision.revision 分别一致。缺元数据、身份版本不一致、未知/缺失票状态、未决票或残留 Fog 均拒绝。
+- 四项许可必须齐全：Map 相关票全部 settle 且无未决项或 Fog、PRD 同步、范围确认、实施授权。tickets 与 Fog 都为空的合法零票 Map 满足第一项，不要求造票；其余三项仍须为真。空 Frontier 本身不是完成证据。allow / proceed / accept / pass 退出码为 0，拒绝或暂停为 3，失效命令为参数错误。
+
 ## 安装与启动
 
 1. 将本目录的 `skills/` 内容放入所用 Agent 支持的技能目录。已有同名文件时先比较，不直接覆盖本地修改。
@@ -10,7 +18,7 @@
 
 `ORCA_ISSUE_SKILL_DIR` 可覆盖主 skill 的安装目录；`ORCA_ISSUE_PYTHON` 可指定 Python 3 解释器。路径必须按当前执行宿主填写，安装目录与开发项目目录不是同一个概念。
 
-需求澄清由 `wayfinder` 推进，`prd-writing` 整理统一 PRD / SPEC，`align-requirements` 展示对应版本并在对话或已有获准评论工具中收集意见；有效决定校验后更新回同一份正文，关键缺口回到 wayfinder。已确认需求直接复用，小改动不强制完整 PRD、Map 或 HTML。衔接见 `skills/orca-issue-orchestration/references/requirements.md`。
+需求澄清由 `wayfinder` 推进，`prd-writing` 整理统一 PRD / SPEC，`align-requirements` 展示对应版本并在对话或已有获准评论工具中收集意见；有效决定校验后更新回同一份正文，关键缺口回到 wayfinder。每次启动或恢复必须经同套件 wayfinder 创建或恢复 MCP Map；已有确认直接复用，不重复问、不虚构票、不跳过 Map，无真实待决可零票但不可免 Map。衔接见 `skills/orca-issue-orchestration/references/requirements.md`。
 
 新任务暂按用户确认的分类核对模型，唯一分类表见 `skills/orca-issue-orchestration/references/models.md`；MCP 提供正式分组后移除临时分类。本端只读 OMC 目录与额度，不实现分组、排序、预约或自动替换，不改运行中的会话或全局模型。接入方式见命令参考。
 

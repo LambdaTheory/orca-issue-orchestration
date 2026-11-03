@@ -1,139 +1,78 @@
 ---
 name: wayfinder
-description: Default requirements clarification for orca-issue-orchestration. Clarify the destination and pending decisions; for work spanning sessions, chart a shared map of decision tickets and resolve them one at a time until the way is clear.
+description: Default requirements clarification for orca-issue-orchestration. On every workflow start or resume, create or restore an MCP Map, clarify the destination and pending decisions, and resolve its decision Tickets together with the human until the way is clear.
 ---
 
-**Local changes:** Clarification uses `align-requirements` and the `clarification` ticket type; `prd-writing` organizes the single requirements source before the Orca handoff. Shared-suite activation, prototype and documentation boundaries apply below.
+<!-- Adapted from Matt Pocock's wayfinder skill (MIT) to plan through the Wayfinder MCP service. Product-side integration goes through the service's MCP contract only; the service is a separate product whose license is governed by its upstream repository, not by this file. The service owns Map state and its tool descriptions govern every state change; this file adds the method and the Orca-suite handoff, and deliberately does not restate the service's rule text. -->
 
-**Activation in this shared suite:** `orca-issue-orchestration` invokes Wayfinder by default for requirements clarification after its repository and remote-plan checks; a separate `/wayfinder` request is not required. Reuse confirmed requirements and existing maps instead of interviewing again. Wayfinder owns the clarification order and decision map; `prd-writing` consolidates the requirements source and `align-requirements` presents its current discussion/version and collects the user's answers. Within the current HITL ticket, use `align-requirements` for a versioned Chinese requirements document and feedback on its sections/figures, showing only genuine independent pending decisions, reusing known facts and prior decisions without asking again or inventing questions to fill a quota. This does not allow resolving multiple HITL tickets in one session or bypassing the user's decision. Before handing off to Orca development, return to its confirmed-requirements and project-readiness checks. When calling `prototype` during this clarification phase, keep the prototype and decision as exploratory artifacts; do not follow its standalone fold-back/production-absorption step into real application code. A resolved design ticket is not authorization to implement. Production integration belongs to the confirmed development task; standalone prototype semantics outside this phase are unchanged. In this same clarification context, keep `domain-modeling`'s reasoning method, but reuse the project's agreed document locations; before creating CONTEXT.md or an ADR layout where none is agreed, ask the user to confirm the location. Until then, retain modeling decisions in the agreed clarification record rather than automatically creating a new documentation structure.
+**Local changes:** orca-issue-orchestration is the single entry; it invokes this skill by default and must create or restore an MCP Map on every start or resume, regardless of task size, one-turn scope or prior confirmation. Reuse the current workflow Map; do not create a new Map per message or implementation sub-Issue. Clarification Tickets surface as batched Answer Desk questions during discussion (the old one-HITL-ticket-per-session limit no longer applies inside a Map), and the ticket type used for clarification is grilling. prd-writing keeps the single PRD/SPEC; align-requirements presents its current version and collects answers. See the PRD handoff section below.
+
+## The Map lives in the Wayfinder MCP service
+
+The Map records every requirement entering the Orca orchestration workflow, including requirements already confirmed. Its single authoritative store is the **Wayfinder MCP service**, reached only with these tools: `map_create`, `map_list`, `map_read`, `map_apply`, `map_wait`. Nothing else is the Map:
+
+- No credential bypass, no direct HTTP writes, no scripts that emulate the service, no GitHub or local-file substitute for Map state.
+- If the tools are missing, or the service fails, **stop and say so plainly** (what was attempted, what failed, what decision or service is missing), then wait. Do not route around the failure and do not improvise a second store.
+- Older maps kept as GitHub issues from before this change stay **read-only history**: never migrate them into the service, never dual-write them, and never close or edit them to fake completion. Answer recovery and history for an old map still goes through that issue tracker; only new requirements are charted in the MCP service.
+- Every start or resume of orca-issue-orchestration must call this sibling skill and create or restore an MCP Map. Zero Tickets do not waive the Map: when no genuine pending decision exists, retain a zero-Ticket Map rather than inventing a Ticket or skipping the Map. Reuse prior explicit decisions and authorizations as existing evidence within genuine Tickets; do not ask them again or invent Tickets merely to record them.
+
+## Plan, don't do
+
+A Map is **planning**. Each Ticket resolves a decision; planning hands off to implementation outside the Map. Keep a Claim only while waiting for the human's reply to that Ticket, and apply writes only against the latest observed Revision; on a conflict, reread, report the new Revision and stop — never replay, merge, or take over unasked.
+
+**Completion has no close button.** The service exposes no Map-close tool: do not invent one, and treat an empty Frontier as **not** evidence of completion. The requirement phase is done only when the Map shows every relevant Ticket settled, no blocking Fog, and there is no undecided in-scope choice blocking handing the plan to its implementer — checked against a current `map_read`, not against memory.
+
+## Talking to the human
+
+Refer to Maps and Tickets by **title** in everything the human reads; keep stable IDs for tool calls and may show an ID beside a title, never instead of it. Tell them outcomes and what you need from them; Claims, Revisions and Settlements are bookkeeping and stay out of replies. When you need a verdict, ask the question and do not explain the rule that makes you wait.
+
+## The Map
+
+The Map is an **index, not a store**; a decision lives in exactly one place, its Ticket's Settlement. Each part holds one job:
+
+| Part | Holds |
+| --- | --- |
+| Destination | What reaching the end looks like: the spec, decision or change this effort finds its way to. |
+| Notes | Domain, skills every session should consult, standing preferences and constraints — never decisions. |
+| Tickets | One open question each; settled Tickets are the record of decisions. |
+| Fog | In-scope questions you can see coming but cannot state precisely yet. |
+| Scope Exclusions | Work ruled beyond the Destination; it never graduates. |
+
+Tickets carry a type `research` (AFK, settled with a sourced Finding), `grilling` (HITL conversation, the default — clarification questions land here), `prototype` (HITL, a cheap artifact to react to) or `task` (manual work that unblocks a decision, never builds the Destination). A HITL Ticket resolves only through the human's verdict on the specific answer proposed; the agent never supplies the human's side. Blocking uses Ticket Dependencies; the **Frontier** is what `map_read` returns as open, unblocked, unclaimed Tickets.
+
+**Publish in batches, not one at a time.** Post every currently askable human question to the Answer Desk **at once** inside the active Map Ticket batch: each with two or three options, a full recommended answer, why it is being asked, and its triage. Claim each Ticket before posting its question. While answers are pending, keep preparing other Frontier work; never hold back an askable question to preserve a one-question-per-session rhythm.
+
+**Orca preparation override:** follow `orca-issue-orchestration/references/preparation.md` for authorization and where requirement records live. During the planning phase, do not start development watchers, Runs or workers — the map and its Tickets are planning artifacts, not implementation tickets. When planning completes, hand the requirement back to the original orca-issue-orchestration coordinator, which proceeds with the already-authorized GitHub ticket-creation and Orca dispatch flow without asking the user to restart anything. Reuse confirmed decisions when publishing or resuming; do not re-interview them.
 
 ## PRD handoff in the Orca suite
 
 Wayfinder owns the questions and their order; call the sibling `prd-writing/SKILL.md` for its material check and, once the key facts and decisions are ready, to organize the single requirements document. Follow `orca-issue-orchestration/references/requirements.md`. A key gap goes back to Wayfinder; do not turn an unresolved proposal into a complete PRD or run a second interview in the writer.
 
-The PRD (or the project's existing SPEC in that role) is the single requirements source. The map and decision tickets retain reasons and link to its requirement/acceptance IDs; `align-requirements` presents a specific PRD version and collects feedback, not a separate plan. Check response IDs and versions, then update the same PRD with valid decisions and retain the displayed snapshot. A confirmation of one ticket does not approve the entire PRD. Reuse explicit approval, including a single reply that selects changes and confirms their result; do not ask for a second approval merely because a PRD was written or versioned. Small changes need no full PRD, map or HTML page. The template has no built-in comments or answer export; collect feedback in the current conversation or through an already-authorized host comment tool, not a new feedback service. This does not change the one-HITL-ticket-per-session limit or grant implementation authorization.
+The PRD (or the project's existing SPEC in that role) is the single requirements source. The Map's Tickets and Settlements keep reasons and link to its requirement/acceptance IDs; `align-requirements` presents a specific PRD version and collects feedback, not a separate plan. Check response IDs and versions, then update the same PRD with valid decisions and retain the displayed snapshot. A verdict on one Ticket settles that question and does **not** approve the entire PRD; approval of the whole requirement is its own check. Reuse an explicit approval, including a single reply that selects changes and confirms their result; do not ask a second time merely because the PRD was written or versioned, and do not add an extra fixed approval ticket to a user who already made this decision. No size-based Map exemption applies in the Orca workflow. A zero-Ticket Map with no Fog may pass only with PRD synchronization, confirmed scope and implementation authorization; no artificial Ticket or extra approval is needed. The template has no built-in comments or answer export. A Map accepts human answers through the Answer Desk or an explicit conversation verdict on a specific displayed answer; each question still has a single active intake. For a Pending or Answered Desk Question answered explicitly in conversation, withdraw that exact question version with reason `answered in conversation` and settle without `deskAnswer` in the same ordered `map_apply`. Never keep both paths active or request a duplicate Desk reply. For the Desk path, bind the current Taken answer ID and question version; a duplicate reply is not a new verdict. For ordinary PRD presentation feedback, use the current conversation or an already-authorized host comment tool without opening another decision intake. A generic continue, scope comment or blanket assent to unseen recommendations is not a verdict.
 
-A loose idea has arrived, too big for one agent session, and wrapped in fog: the way from here to the **destination** isn't visible yet. Wayfinding is about finding that way, not charging at the destination. This skill charts the way as a **shared map** on the repo's issue tracker, then works its **decision tickets** (questions whose resolution is a decision, not slices of a build to execute) one at a time until the route is clear.
+## Sibling skills during clarification
 
-The destination varies per effort, and naming it is the first act of charting: it shapes every ticket. It might be a spec to hand off and iterate on, a decision to lock before planning starts, or a change made in place like a data-structure migration. The map is domain-agnostic: engineering work, course content, whatever fits the shape.
-
-## Plan, don't do
-
-Wayfinder is **planning** by default: each ticket resolves a decision, and the map is done when the way is clear, with nothing left to decide before someone goes and does the thing. The pull to just do the work is usually the signal you've reached the edge of the map and it's time to hand off. An effort can override this in its **Notes**, carrying execution into the map itself, but absent that, produce decisions, not deliverables.
-
-## Refer by name
-
-Every map and ticket is an issue, so it has a **name**: its title. In everything the human reads (narration, the map's Decisions-so-far), refer to it by that name, never by a bare id, number, or slug. A wall of `#42, #43, #44` is illegible; names read at a glance. The id and URL don't vanish; a name wraps its link, but they ride _inside_ the name, never stand in for it.
-
-## The Map
-
-The map is a single issue on this repo's issue tracker, labelled `wayfinder:map`, the canonical artifact. Its tickets are child issues of the map.
-
-The map is an **index**, not a store. It lists the decisions made and points at the tickets that hold their detail; a decision lives in exactly one place, its ticket, so the map never restates it, only gists it and links.
-
-**Orca preparation override:** Follow `orca-issue-orchestration/references/preparation.md` for tracker readiness, authorization and storage. If the remote is pending creation or remote writes are not yet authorized, keep the map and decision records in the agreed local clarification directory; do not create the remote early, fall back to a new `.scratch/` layout, or ask the user to run setup separately. Once readiness and authorization permit it, publish/link retained records without reopening settled decisions. When GitHub is used, apply the orchestration task label to the map and every decision ticket alongside `wayfinder:*` labels; do not start a watcher or development Run during clarification. When the destination is clear, no blocking decisions remain and requirements are confirmed, record completion and close the map within the existing authorization before handing off. Resolved local decisions remain resolved when published; never close an unresolved map or ticket merely to stop a watcher. These preparation overrides do not change standalone tracker conventions below.
-
-**Where the map, its child tickets, blocking, and frontier queries physically live is tracker-specific.** The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`. Consult the tracker doc's "Wayfinding operations" section for how _this_ repo expresses them. If no tracker has been provided, default to the local-markdown tracker.
-
-### The map body
-
-The whole map at low resolution, loaded once per session. Open tickets are **not** listed: they are open child issues, found by query.
-
-```markdown
-## Destination
-
-<what reaching the end of this map looks like: the spec, decision, or change this effort is finding its way to. One or two lines; every session orients to it before choosing a ticket.>
-
-## Notes
-
-<domain; skills every session should consult; standing preferences for this effort>
-
-## Decisions so far
-
-<!-- the index: one line per closed ticket, enough to judge relevance, then zoom the link for the detail the ticket holds -->
-
-- [<closed ticket title>](link): <one-line gist of the answer>
-
-## Not yet specified
-
-<!-- see "Fog of war": in-scope fog you can't ticket yet; graduates as the frontier advances -->
-
-## Out of scope
-
-<!-- see "Out of scope": work ruled beyond the destination; closed, never graduates -->
-```
-
-### Tickets
-
-Each ticket is a **child issue** of the map; the tracker's issue id is its identity. Its body is the question, sized to one 100K token agent session:
-
-```markdown
-## Question
-
-<the decision or investigation this ticket resolves>
-```
-
-Each ticket carries a `wayfinder:<type>` label, one of `research`, `prototype`, `clarification`, `task` (see [Ticket Types](#ticket-types)).
-
-A session **claims** a ticket by assigning it to the dev driving the map, **first**, before any work, so concurrent sessions skip it. That assignee _is_ the claim: an open, unassigned ticket is unclaimed.
-
-Blocking uses the tracker's **native** dependency relationship: essential because it renders the frontier _visually_ in the tracker's own UI, so the human sees what's takeable without opening the map. Only a tracker that lacks native blocking falls back to a body convention. A ticket is **unblocked** when every ticket blocking it is closed; the **frontier** is the open, unblocked, unclaimed children, the edge of the known.
-
-The answer isn't part of the body; it's recorded on resolution (see [Work through the map](#work-through-the-map)). Assets created while resolving a ticket are linked from the issue, not pasted in.
-
-## Ticket Types
-
-Every ticket is either **HITL** (human in the loop, worked _with_ a human who speaks for themselves) or **AFK**, driven by the agent alone. A HITL ticket only resolves through that live exchange; the agent never stands in for the human's side of it (a clarification agent that makes the human's product decisions has broken this).
-
-- **Research** (AFK): Reading documentation, third-party APIs, or local resources like knowledge bases to surface a fact a decision waits on. Resolved by a subagent that calls the Skill tool with "research". Use when knowledge outside the current working directory is required.
-- **Prototype** (HITL): Raise the fidelity of the discussion by making a cheap, rough, concrete artifact to react to (an outline, a rough take, a stub, or UI/logic code) by calling the Skill tool with "prototype". Links the prototype as an asset. Use when "how should it look" or "how should it behave" is the key question.
-- **Clarification** (HITL): Conversation. The default case. Use `align-requirements` for the current discussion and `domain-modeling` for reasoning; the Orca PRD handoff above governs material checks, consolidation and versioned feedback. Do not call the writer to create a new PRD for every ticket.
-- **Task** (HITL or AFK): Manual work that must happen before a _decision_ can be made: nothing to decide, prototype, or research, but the discussion is blocked until it's done. Signing up for a service so its API can be judged, provisioning access, moving data so its shape can be seen. This is the one type that _does_ rather than decides, and it earns its place by unblocking a decision, not by delivering the destination. The agent drives it alone where it can (AFK); otherwise it hands the human a precise checklist (HITL). Resolved when the work is done; the answer records what was done and any resulting facts (credentials location, new URLs, row counts) later tickets depend on.
-
-## Fog of war
-
-The map is _deliberately_ incomplete: don't chart what you can't yet see. Beyond the live tickets lies the **fog of war**: the dim view of decisions and investigations you can tell are coming but can't yet pin down, because they hang on questions still open. Resolving a ticket clears the fog ahead of it, graduating whatever's now specifiable into fresh tickets, one at a time, until the way to the destination is clear and no tickets remain.
-
-The map's **Not yet specified** section is where that dim view is written down: the suspected question, the area to revisit later. It's the undiscovered frontier _toward_ the destination: everything here is in scope, just not sharp enough to ticket. Write as loosely or as fully as the view allows; it doubles as a signpost for collaborators reading where the effort is headed.
-
-**Fog or ticket?** The test is whether you can state the question precisely now, _not_ whether you can answer it now.
-
-- **Ticket when** the question is already sharp, even if it's blocked and you can't act on it yet.
-- **Not yet specified when** you can't yet phrase it that sharply. Don't pre-slice the fog into ticket-sized pieces: it's coarser than a ticket, and one patch may graduate into several tickets, or none, once the frontier reaches it.
-
-**Not yet specified** excludes what's already decided (Decisions so far), what's already a live ticket, and what's out of scope (the next section).
-
-## Out of scope
-
-Fog only ever gathers _toward_ the destination. The destination fixes the scope, so work beyond it is **out of scope**: it isn't fog, and it doesn't belong in **Not yet specified**. It gets its own **Out of scope** section on the map: work you've consciously ruled out of _this_ effort. Scope, not sharpness, lands it here.
-
-Out-of-scope work never graduates (the frontier stops at the destination), so it returns only if the destination is redrawn, and then as a fresh effort, not a resumption.
-
-Ruling something out of scope is a scoping act, not a step on the route. When a ticket that already exists turns out to sit past the destination (mis-scoped in while charting, or exposed by a resolution), **close it** (a closed ticket is unambiguously off the frontier) and leave one line in the **Out of scope** section: the gist plus why it's out of scope, linking the closed ticket. It stays out of **Decisions so far**, which records the route actually walked; a scope boundary isn't a step on it.
+When calling `prototype` during this clarification phase, the prototype and the resolved design ticket stay exploratory artifacts: do not follow its standalone fold-back/production-absorption step into real application code, and a resolved design ticket is not authorization to implement — production integration belongs to the confirmed development task. Keep `domain-modeling`'s reasoning method, but reuse the project's agreed document locations; before creating CONTEXT.md or an ADR layout where none is agreed, ask the user to confirm the location, and until then retain modeling decisions in the agreed clarification record. Reuse confirmed requirements and existing Maps instead of interviewing again; ask only the genuine, independent pending questions of the current Ticket, and never pad the batch with invented questions.
 
 ## Invocation
 
-Two modes. Either way, **never resolve more than one ticket per session**, with the exception of research tickets.
+### Chart the Map
 
-### Chart the map
+Any requirement entering orca-issue-orchestration, no Map yet; prior confirmation is reusable evidence, not a Map exemption.
 
-User invokes with a loose idea.
+1. **Name the Destination with the human** using grilling until it is observable and the human confirms it. It fixes the scope, so it comes first; do not create a Map on a guessed Destination.
+2. **Map the frontier breadth-first.** Reuse known facts and agreed decisions; fan out across the space in one batch to surface the open decisions and the first steps takeable now.
+3. **Discover, then create.** Page `map_list` to the end; if the intended Map exists, retain its stable ID and resume instead of creating a replacement. Otherwise call `map_create` once with the confirmed Destination.
+4. **Publish genuine open work in one ordered `map_apply`** against the returned Revision; if there are no genuine pending Tickets or Fog, keep the valid zero-Ticket Map and continue to the handoff checks without a synthetic Ticket or empty write. Otherwise publish: the Tickets you can state precisely now, then their Dependencies, then Fog and Scope Exclusions. A Ticket question states only the question.
+5. **Fire the research tickets** to sub-agents that do the reading and return summaries; sub-agents never claim or write.
+6. Continue directly into the first Frontier batch in the same session when it is ready; charting does not require a session stop and does not itself settle human decisions.
 
-1. **Name the destination.** Call the Skill tool twice, for "align-requirements" and "domain-modeling", to pin down what this map is finding its way to: the spec, decision, or change. The destination fixes the scope, so it's settled first.
-2. **Map the frontier.** Use `align-requirements` to present the requirements and genuine independent pending questions, **breadth-first** this time: fan out across the whole space rather than deep on any one thread, surfacing the open decisions and the first steps takeable now. Reuse known facts and agreed decisions; do not ask them again or pad the batch. **If this surfaces no fog** (the way to the destination is already clear, the whole journey small enough for one session), you don't need a map. In an Orca invocation, return the clarified scope, acceptance criteria and confirmation record to the orchestration readiness checks, consolidating them in the existing requirements source (a concise update is enough for a small task); when the user has already confirmed and authorized startup, continue without an extra proceed question. If confirmation or a necessary authorization is still missing, ask only for that item. For standalone use, ask the user how they'd like to proceed.
-3. **Create the map** (label `wayfinder:map`): Destination and Notes filled in, Decisions-so-far empty, the fog sketched into **Not yet specified**.
-4. **Create the tickets you can specify now** as child issues of the map, then wire blocking edges in a **second pass** (issues need ids before they can reference each other). Wiring sorts them into the frontier and the blocked; everything you can't yet specify stays in the fog: the **Not yet specified** section.
-5. **Fire the research subagents.** For each `research` ticket you just created, spin up a subagent that calls the Skill tool with "research" to resolve it in parallel, capturing its findings on a throwaway `research/<name>` branch with a context pointer from the ticket.
-6. Stop: charting is one session's work; it hand-resolves nothing.
+### Work through a Map
 
-### Work through the map
+1. Read the Map with `map_read`; on resumption default-read to observe the authoritative current Revision.
+2. Claim a Frontier Ticket from the current read before working on it.
+3. **Resolve it**, batching: publish every currently askable question at once via the Answer Desk, and keep independent work going while the human decides. If the human named a Ticket, start there; otherwise take what the Frontier offers, without a one-per-session cap.
+4. Settle released verdicts and publish newly unlocked questions in the same ordered `map_apply` where its rules allow; settle a grilling Ticket with `deskAnswer` identifying the current Taken answer ID and question version, or use the explicit conversation verdict path above (withdraw Pending/Answered then settle without `deskAnswer` in the same batch). Add Tickets only for decisions an answer made precise and the route still needs; graduate the Fog it cleared; name any settled decision the answer invalidates and reopen it only on the human's verdict.
+5. On resumption and at each Settlement, run the completion check: every relevant Ticket settled, no blocking Fog, no undecided in-scope choice — otherwise name the specific unfinished Ticket and keep working. When it passes, record the accepted decisions, their Map links and the PRD version, and hand the requirement back to the orca-issue-orchestration coordinator for the authorized build flow.
 
-User invokes with a map (URL or number). A ticket is **optional**: without one, you pick the next decision, not the user.
-
-1. Load the **map**: the low-res view, not every ticket body.
-2. Choose the ticket. If the user named one, use it. Otherwise take the first frontier ticket in order. **Claim it**: assign it to yourself before any work.
-3. Resolve it. **Zoom as needed**: fetch the full body of any related or closed ticket on demand; call the Skill tool for whichever skills the `## Notes` block names. If in doubt, call the Skill tool twice, for "align-requirements" and "domain-modeling".
-4. Record the resolution: post the answer as a **resolution comment**, **close** the issue, and **append a context pointer** to the map's Decisions-so-far.
-5. Add newly-surfaced tickets (create-then-wire); graduate any fog the answer has made specifiable, clearing each graduated patch from **Not yet specified** so it lives only as its new ticket. If the answer reveals that a ticket (this one or another) sits beyond the destination, **rule it out of scope** rather than resolving it on the route. If the decision invalidates other parts of the map, update or delete those tickets.
-
-The user may run unblocked tickets in parallel, so expect other sessions to be editing the tracker concurrently.
+Other sessions may advance the same Map concurrently; the service's conflict rules decide what happens, not Orca's general retry habits.

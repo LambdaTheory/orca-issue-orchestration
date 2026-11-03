@@ -34,7 +34,23 @@
 → 按授权交付 PR → 记录结果并收口
 ```
 
-- 需求澄清默认进入 `wayfinder`；`prd-writing` 检查并整理统一 PRD（已有 SPEC 可直接承担），`align-requirements` 用需求文档式页面展示对应版本并收集意见，默认在当前对话反馈，不假定模板自带评论或答题导出。关键缺口回到 wayfinder，有效决定校验后更新回 PRD；已有确认直接复用，小改动不强制完整 PRD、Map 或 HTML。三者不会各自访谈或重复确认，见[需求衔接](windows/skills/orca-issue-orchestration/references/requirements.md)。
+- 每次启动或恢复本工作流必须进入同套件 `wayfinder` 并创建或恢复 MCP Map；Map 只用 Wayfinder MCP（`map_create` / `map_list` / `map_read` / `map_apply` / `map_wait`），Answer Desk 批量提问，旧 GitHub 图只读保留。`prd-writing` 检查并整理统一 PRD（已有 SPEC 可直接承担），`align-requirements` 用需求文档式页面展示对应版本并收集意见，默认在当前对话反馈，不假定模板自带评论或答题导出。关键缺口回到 wayfinder，有效决定校验后更新回 PRD；已有确认直接复用，不重复问、不虚构票、不跳过 Map；无真实待决可零票但不可免 Map。三者不会各自访谈或重复确认，见[需求衔接](windows/skills/orca-issue-orchestration/references/requirements.md)。
+
+## 工作流 Map 门禁
+
+- 每次启动或恢复 `orca-issue-orchestration` 都必须调用同套件 wayfinder 并创建或恢复 MCP Map，不分大小、一轮可答或已有确认；复用当前业务工作流的同一张 Map，不是每轮消息或每个实现子 Issue 各建一图。
+- 已有明确决定与授权复用为票内依据，不重复问、不虚构票、不跳过 Map。没有真实待决事项可以零票，Ticket / Answer 关联如实记为无，但 Map 标题、mapId 与 Revision 必须保留。
+- 工具检查恒查 map_create / map_list / map_read / map_apply / map_wait 五项，缺任一项或服务失败即暂停，不提供 HTTP、GitHub 或本地替代图旁路。核对命令为 `<PY> -X utf8 <SKILL_DIR>/scripts/mcp_gate.py tools --tools <客户端工具列表>`；PY 按宿主选择实际 Python 3 解释器。
+- gate 接收真实 map_read found envelope：revision.mapId 必须是非空字符串、revision.revision 必须是正整数，revision.state 必须存在，state.id 与 revision.mapId、state.currentRevision 与 revision.revision 分别一致。缺元数据、身份版本不一致、未知/缺失票状态、未决票或残留 Fog 均拒绝。
+- 四项许可必须齐全：Map 相关票全部 settle 且无未决项或 Fog、PRD 同步、范围确认、实施授权。tickets 与 Fog 都为空的合法零票 Map 满足第一项，不要求造票；其余三项仍须为真。空 Frontier 本身不是完成证据。allow / proceed / accept / pass 退出码为 0，拒绝或暂停为 3，失效命令为参数错误。
+
+## Wayfinder MCP 接入与行为校验
+
+- 使用方须在宿主中真实连接 Wayfinder MCP，等待 `map_create`、`map_list`、`map_read`、`map_apply`、`map_wait` 工具就绪，并加载服务提供的当前工作流规则（`wayfinder://workflow/exploration`）及工具契约；本套件不代替宿主建立连接，也不持有地址或凭据。Windows 接入沿用上游 PR #151 的接入说明，无需为安装本套件重测服务。
+- CodeBuddy 用 `WaitForMcpServers` 等待连接，并通过 `ToolSearch`（Code Mode 用 `REPL.searchTools`）发现工具；默认 defer 可能使首轮工具不可见，需首轮可用时在服务配置显式使用 `alwaysLoad: true` 或 `defer_loading: false`。Codex 按宿主版本使用 `required` / `startup_readiness` 等待必需服务就绪。这里仅说明配置，不替用户改全局设置。工具名字符串齐全不等于已连上服务；真实接入和规则加载失败时明确暂停。
+- 每次启动或恢复都需要 Map，缺上述任一工具，或服务调用失败时，流程**明确暂停**：可用 `python -X utf8 <SKILL_DIR>/scripts/mcp_gate.py tools --tools <客户端工具列表>`（macOS 用 python3）核对缺项并留档。脚本不提供旁路 HTTP 写，也不生成 GitHub/本地替代地图；恢复只能来自补齐工具接入或服务恢复，恢复后从暂停处重新 `map_read` 继续。
+- `scripts/mcp_gate.py` 只做机械检查：`gate` 接收真实 `map_read` 的 found envelope，从 `revision.state.tickets` / `revision.state.fog` 读取状态（claim 为独立字段），先校验 revision.mapId、正整数 revision.revision 与 state 身份版本一致，再检查票；未知/缺失状态或残留 Fog 保守拒绝。合法零票且无 Fog 的 Map 在 PRD 同步、范围确认和实施授权齐全时可通过，空 Frontier 本身不算完成；三项确认由调用者据证提供。`answer-once` 只按传入的已处理键判重，不保证业务只处理一次；处理凭据由同一澄清检查点保存，服务 Settlements 才是权威。`version` 比较当前 Desk 题版本与 Answer ID，不因 Revision 或文档版本增长自动判过期；Settlement 绑定、所涉 PRD 需求实变、明确对话 verdict 与同批 withdraw/settle 仍由 Agent 按服务契约核对。`old-map` 拒绝列明的旧图写操作，不是所有外部写入的拦截器。JSON 拒绝/暂停的退出码为 3，并写明原因。
+- 行为级校验命令：`python -X utf8 windows/skills/orca-issue-orchestration/scripts/mcp_gate_test.py`，macOS 用 `python3 -X utf8 macos/skills/orca-issue-orchestration/scripts/mcp_gate_test.py`；需求澄清流程定向回归跑同目录 `clarification_flow_test.py`。
 - 新任务暂按用户确认的任务分类核对模型，唯一分类表见[临时模型分类与只读查询](windows/skills/orca-issue-orchestration/references/models.md)；MCP 提供正式分组后移除。本端只读取 OMC 模型目录与额度，不实现分组、排序、预约或自动替换，不维护第二套长期调度规则。
 - 默认串行执行；开发、修复、评审及原生子代理共用模型并发额度，临时分类不扩大并发，已有项目约定优先。
 - 空超时和存活心跳由等待脚本处理，不反复唤醒协调模型；脚本默认每轮检查后间隔 60 秒只读检查 worker，done/idle 未结算持续 120 秒或无可见进展 900 秒时发出核查提醒，不自动判死或重派。
