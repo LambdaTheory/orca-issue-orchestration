@@ -1,8 +1,16 @@
 # 变更记录
 
-## 未发布
+## v2.0.0 — 2026-11-03
+
+**本次最终生效规则为强制 MCP Map。** 工作流强制依赖外部 Wayfinder MCP，每次启动或恢复都必须调用同套件 wayfinder 并创建或恢复当前 MCP Map；移除旧 `small-task` 与 `--map-required` 接口，属于不兼容升级，因此版本升为 2.0.0。Windows / macOS 本次发布内容各含 13 个 skills，Wayfinder 服务不在包内，原有许可边界不变。
+
+本章的旧免图规则、每 session 一票及 html-plan 默认展示路径仅记录历史演进，不作为 v2.0.0 的现行规则；已确认决定直接复用，不重问、不造题，无真实待决可零票但不可免 Map。旧条目事实保留原文，历史测试与发布包状态不代表本次新增验收或附件已发布。
+
+### 最终规则
 
 - 当前入口覆盖此前小任务/已有确认免图规则：orca-issue-orchestration 每次启动或恢复必须调用同套件 wayfinder 并创建或恢复当前 MCP Map，不按规模跳过，不为每轮消息或实现子 Issue 新建图；复用明确决定与授权，不重问、不造票。移除 small-task 与 --map-required；工具门禁恒查五项，found envelope 校验身份和正整数版本，合法零票且无 Fog 的 Map 在 PRD 同步、范围确认、实施授权齐全时可通过。同步双平台入口、文档与定向回归，html-plan 历史免图仅独立用途、不适用主流程；以下历史条目保留原样。
+
+### 历史演进记录（保留原文，以下旧规则不作为当前规则）
 
 - 需求澄清换用 Wayfinder MCP 地图服务：新 Map 只经五个 MCP 工具读写，Answer Desk 批量提问，也保留对已展示具体答案的明确对话 verdict 与同批 withdraw/settle；建图后可同轮继续 Frontier，旧 GitHub 图及 tracker 地图说明只读保留为历史，不迁移、不双写、不作新图初始化器。
 - 返工修正许可、题版本/Answer ID 与 Settlement 绑定、PRD 实变、Desk 已答免评论、具体推荐授权边界及双平台 LF 行尾；机械门禁使用真实 map_read envelope，拒绝未知/缺失状态，Revision 单独前进不使答复过期，判重仅比较传入凭据。新增回归与真实宿主连接/规则加载说明；未进行真实模型全旅程。

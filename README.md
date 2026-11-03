@@ -1,6 +1,6 @@
 # Orca Issue Orchestration Skill Suite
 
-**最近发布：v1.1.1** · 当前未发布源码：Windows / macOS 双平台、13 个项目级 skills（html-plan 仅保留独立用途）
+**当前版本：v2.0.0（2026-11-03）** · Windows / macOS 双平台各 13 个项目级 skills（html-plan 仅保留独立用途）
 
 面向 Orca 的目标驱动开发套件：从仓库探查、需求确认和 GitHub Issue 开始，由协调者安排独立 Agent 开发、评审与修复，最终按授权交付。协调者不代替 worker 写业务实现。
 
@@ -17,13 +17,15 @@
 - 套件版本由根目录 `VERSION` 记录；这是整个套件的版本，不改变内含第三方 skill 的上游版本号。
 - 源码分别位于 `windows/skills/` 和 `macos/skills/`，按实际执行宿主选择，不能混装两份同名 skill。
 - 两平台源码只差参考文档中的平台示例：`references/commands.md` 按平台整套生成，`references/guard.md` 启动示例与 `references/pr.md` 平台选择说明随平台变化；其余文件完全相同，避免两份手工维护产生漂移。
-- 对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从源码安装。已发布 v1.1.1 的两个平台包各含 11 个 skills；当前未发布源码各含 13 个，新增 `prd-writing`、`align-requirements` 及流程调整尚未打入这些 ZIP；旧 `html-plan` 只保留独立用途，非主流程依赖。其来源为团队内部许可，公开分发前须核实相应授权，不能据源码说明推断旧包已更新。
+- 本次 v2.0.0 的 Windows / macOS 发布包各含 13 个 skills，包含 `prd-writing`、`align-requirements`；`html-plan` 仅保留独立用途，非主流程依赖。对应版本正式发布后，可在本仓库 Releases 下载下列 ZIP；若尚无该版本 Release，请从当前版本源码安装，不将待发布附件视为已可下载。
+- 本次为不兼容升级：工作流强制依赖外部 Wayfinder MCP，每次启动或恢复必须创建或恢复当前 MCP Map，移除旧 `small-task` 与 `--map-required` 接口，因此套件版本升为 2.0.0。团队 `prd-writing`、`align-requirements` 的原 `internal` 许可及 manifest 保持不变，本次发版不向使用方新增上游授权，详见 [NOTICE.md](NOTICE.md)。
+- 历史发布事实：v1.1.1 的 Windows / macOS 包各含 11 个 skills；本次 v2.0.0 不改写旧 Release，也不表示既有安装已更新。
 - `SHA256SUMS.txt` 用于核对下载文件；变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 执行宿主 | 源码 | Release 文件 |
 |---|---|---|
-| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v1.1.1-windows.zip` |
-| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v1.1.1-macos.zip` |
+| Windows | [`windows/skills`](windows/skills) | `orca-issue-orchestration-v2.0.0-windows.zip` |
+| macOS | [`macos/skills`](macos/skills) | `orca-issue-orchestration-v2.0.0-macos.zip` |
 
 ## 核心流程
 
@@ -46,7 +48,7 @@
 
 ## Wayfinder MCP 接入与行为校验
 
-- 使用方须在宿主中真实连接 Wayfinder MCP，等待 `map_create`、`map_list`、`map_read`、`map_apply`、`map_wait` 工具就绪，并加载服务提供的当前工作流规则（`wayfinder://workflow/exploration`）及工具契约；本套件不代替宿主建立连接，也不持有地址或凭据。Windows 接入沿用上游 PR #151 的接入说明，无需为安装本套件重测服务。
+- 使用方须在宿主中真实连接 Wayfinder MCP，等待 `map_create`、`map_list`、`map_read`、`map_apply`、`map_wait` 工具就绪，并加载服务提供的当前工作流规则（`wayfinder://workflow/exploration`）及工具契约；本套件不代替宿主建立连接，也不持有地址或凭据。Windows 接入说明针对上游 PR #151 的采用分支，不代表主线已具备该能力；无需为安装本套件重测服务。
 - CodeBuddy 用 `WaitForMcpServers` 等待连接，并通过 `ToolSearch`（Code Mode 用 `REPL.searchTools`）发现工具；默认 defer 可能使首轮工具不可见，需首轮可用时在服务配置显式使用 `alwaysLoad: true` 或 `defer_loading: false`。Codex 按宿主版本使用 `required` / `startup_readiness` 等待必需服务就绪。这里仅说明配置，不替用户改全局设置。工具名字符串齐全不等于已连上服务；真实接入和规则加载失败时明确暂停。
 - 每次启动或恢复都需要 Map，缺上述任一工具，或服务调用失败时，流程**明确暂停**：可用 `python -X utf8 <SKILL_DIR>/scripts/mcp_gate.py tools --tools <客户端工具列表>`（macOS 用 python3）核对缺项并留档。脚本不提供旁路 HTTP 写，也不生成 GitHub/本地替代地图；恢复只能来自补齐工具接入或服务恢复，恢复后从暂停处重新 `map_read` 继续。
 - `scripts/mcp_gate.py` 只做机械检查：`gate` 接收真实 `map_read` 的 found envelope，从 `revision.state.tickets` / `revision.state.fog` 读取状态（claim 为独立字段），先校验 revision.mapId、正整数 revision.revision 与 state 身份版本一致，再检查票；未知/缺失状态或残留 Fog 保守拒绝。合法零票且无 Fog 的 Map 在 PRD 同步、范围确认和实施授权齐全时可通过，空 Frontier 本身不算完成；三项确认由调用者据证提供。`answer-once` 只按传入的已处理键判重，不保证业务只处理一次；处理凭据由同一澄清检查点保存，服务 Settlements 才是权威。`version` 比较当前 Desk 题版本与 Answer ID，不因 Revision 或文档版本增长自动判过期；Settlement 绑定、所涉 PRD 需求实变、明确对话 verdict 与同批 withdraw/settle 仍由 Agent 按服务契约核对。`old-map` 拒绝列明的旧图写操作，不是所有外部写入的拦截器。JSON 拒绝/暂停的退出码为 3，并写明原因。
@@ -74,7 +76,7 @@
 | `prototype` | 针对具体设计问题制作验证原型 |
 | `research` | 查证资料与技术事实 |
 | `tdd` | 按测试驱动方式实施指定任务 |
-| `wayfinder` | 默认需求澄清入口；必要时用 Map / 决策票拆解复杂工作 |
+| `wayfinder` | 需求澄清必经入口；每次启动或恢复都必须调用同套件 wayfinder，并创建或恢复当前 MCP Map |
 | `setup-matt-pocock-skills` | 准备 tracker、标签及领域文档约定 |
 
 独立的 `code-review` 仍提供双轴评审能力，但编排主流程默认只安排一次独立评审，不因此自动开启更多评审 Agent。
@@ -96,12 +98,14 @@
 
 首次安装前检查目标目录；下面的复制只用于新目录。已有同名 skills 时先比较再合并，避免覆盖本地修改。
 
-### Windows（PowerShell）
+以下固定版本命令适用于 v2.0.0 tag 已发布后；发布前可从当前版本源码复制所选平台的 skills。
+
+### Windows · v2.0.0 · 13 skills（PowerShell）
 
 ```powershell
 git clone https://github.com/LambdaTheory/orca-issue-orchestration.git
 cd orca-issue-orchestration
-git checkout v1.1.1
+git checkout v2.0.0
 # 首次安装到目标项目；把路径替换为实际项目目录。
 $Destination = "E:/your-project/.agents/skills"
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
@@ -110,12 +114,12 @@ Copy-Item -Path "./windows/skills/*" -Destination $Destination -Recurse
 
 详细命令见 [Windows 命令参考](windows/skills/orca-issue-orchestration/references/commands.md)。
 
-### macOS（bash / zsh）
+### macOS · v2.0.0 · 13 skills（bash / zsh）
 
 ```bash
 git clone https://github.com/LambdaTheory/orca-issue-orchestration.git
 cd orca-issue-orchestration
-git checkout v1.1.1
+git checkout v2.0.0
 # 首次安装到目标项目；把路径替换为实际项目目录。
 DEST="/path/to/your-project/.agents/skills"
 mkdir -p "$DEST"

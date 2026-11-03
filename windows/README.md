@@ -1,6 +1,6 @@
-# Orca Issue Orchestration · windows · v1.1.1
+# Orca Issue Orchestration · windows · v2.0.0
 
-当前未发布源码包含完整 13 个 skills（html-plan 仅保留独立用途）（已发布 v1.1.1 包为 11 个，未更新），使用 PowerShell 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
+v2.0.0 发布包包含完整 13 个 skills（html-plan 仅保留独立用途），使用 PowerShell 命令。主入口为 `skills/orca-issue-orchestration/SKILL.md`，命令参考为 `skills/orca-issue-orchestration/references/commands.md`。
 
 ## 工作流 Map 门禁
 
@@ -23,6 +23,15 @@
 新任务暂按用户确认的分类核对模型，唯一分类表见 `skills/orca-issue-orchestration/references/models.md`；MCP 提供正式分组后移除临时分类。本端只读 OMC 目录与额度，不实现分组、排序、预约或自动替换，不改运行中的会话或全局模型。接入方式见命令参考。
 
 按需读取参考文档，不把所有历史记录加载到协调者上下文。只按已有授权交付；首次安装不会自动创建 Run、Issue、订阅或开发任务。
+
+## v2.0.0 升级说明 — 2026-11-03
+
+- 本次为不兼容升级：强制依赖外部 Wayfinder MCP，`wayfinder` 是主工作流必经入口，每次启动或恢复必须调用同套件 wayfinder 并创建或恢复当前 MCP Map；旧 `small-task` 与 `--map-required` 接口已移除。
+- 升级前须在执行宿主配置并真实连接 `map_create`、`map_list`、`map_read`、`map_apply`、`map_wait` 五个 Wayfinder MCP 工具，并加载服务的当前工作流规则与工具契约；缺任一工具或服务失败时暂停，不以 HTTP、GitHub 或本地地图替代。
+- 旧 GitHub 图仅只读保留，不迁移、不双写、不用作新图初始化器；当前业务工作流复用同一张 MCP Map。
+- 复用已确认的事实、决定与授权，不重问、不造题、不虚构票；无真实待决事项可零票，但不能跳过 Map，PRD 同步、范围确认和实施授权仍须齐全。
+- Wayfinder 服务不在本发布包内，包中无秘密，不含服务凭据或令牌；地址与凭据由使用方在宿主中安全配置。服务许可由上游决定，本套件不为其指定 MIT 或授予额外权利。团队 `prd-writing`、`align-requirements` 的原 `internal` 许可、manifest 和上游版本保持原样，来源与使用边界见根目录 `NOTICE.md`。
+- Windows 接入说明针对上游 PR #151 的采用分支，不是主线现成能力；不能仅因安装本套件就假定该能力可用。
 
 ## v1.1.1 升级说明
 
